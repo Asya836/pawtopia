@@ -421,11 +421,11 @@ export default function AddAnimalPage() {
         if (!animalColor.trim()) nextErrors.animalColor = 'Hayvanın rengi zorunludur.'
 
         if (!animalAge.trim()) {
-            nextErrors.animalAge = 'Hayvan yaşı zorunludur.'
+            nextErrors.animalAge = 'Tahmini yaş zorunludur.'
         } else {
             const numericAge = Number(animalAge)
             if (!Number.isInteger(numericAge) || numericAge <= 0 || numericAge > 40) {
-                nextErrors.animalAge = 'Yaş 1 ile 40 arasında bir sayı olmalıdır.'
+                nextErrors.animalAge = 'Tahmini yaş 1 ile 40 arasında bir sayı olmalıdır.'
             }
         }
 
@@ -627,7 +627,7 @@ export default function AddAnimalPage() {
                 />
                 {!!errors.animalColor && <Text style={styles.errorText}>{errors.animalColor}</Text>}
 
-                <Text style={styles.inputLabel}>Hayvan Yaşı</Text>
+                <Text style={styles.inputLabel}>Tahmini Yaş</Text>
                 <TextInput
                     style={[styles.textInput, errors.animalAge && styles.inputErrorBorder]}
                     placeholder="Örn: 2"

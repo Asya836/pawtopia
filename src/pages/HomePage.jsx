@@ -1,10 +1,12 @@
-import { ScrollView, StyleSheet, Text, View, Image, ImageBackground, Pressable } from 'react-native'
-import React, { useEffect, useState } from 'react'
-import { useNavigation, useRoute } from '@react-navigation/native'
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View, Image, ImageBackground, Pressable } from 'react-native'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native'
 import { Asset } from 'expo-asset'
+import * as Location from 'expo-location'
 import * as FileSystem from 'expo-file-system/legacy'
 import NearbyAnimals from '../components/nearbyAnimalsCard'
 import { getColor } from '../css/theme'
+import { getPets } from '../firebase/helpers'
 
 const DEFAULT_DAILY_INFO = 'Uygulamamızda her gün yeni bir hayvan bilgisi paylaşarak, sokak hayvanları hakkında daha fazla bilgi edinmeni sağlıyoruz.'
 
@@ -22,12 +24,166 @@ const getDayOfYear = (date) => {
     return Math.floor(diff / oneDayMs)
 }
 
+const normalizeText = (value) => String(value || '').trim().toLocaleLowerCase('tr-TR')
+
+const toRadians = (value) => (value * Math.PI) / 180
+
+const getDistanceKm = (from, to) => {
+    if (!from || !to) return null
+
+    const earthRadiusKm = 6371
+    const deltaLat = toRadians(to.latitude - from.latitude)
+    const deltaLon = toRadians(to.longitude - from.longitude)
+    const lat1 = toRadians(from.latitude)
+    const lat2 = toRadians(to.latitude)
+
+    const a =
+        Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+        Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2) * Math.cos(lat1) * Math.cos(lat2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+    return earthRadiusKm * c
+}
+
+const getPetLocationLabel = (pet) => [pet?.city, pet?.district, pet?.neighborhood].filter(Boolean).join(' / ')
+
+const getBestLocationLabel = (place) => {
+    if (!place) return null
+
+    const parts = [place.neighborhood, place.district, place.city].filter(Boolean)
+    return parts.length ? parts.join(' / ') : null
+}
+
 export default function HomePage() {
     const navigation = useNavigation()
     const route = useRoute()
     const [flashVisible, setFlashVisible] = useState(false)
     const [flashText, setFlashText] = useState('')
     const [dailyInfo, setDailyInfo] = useState(DEFAULT_DAILY_INFO)
+    const [pets, setPets] = useState([])
+    const [currentLocation, setCurrentLocation] = useState(null)
+    const [currentLocationLabel, setCurrentLocationLabel] = useState('Konum alınıyor...')
+    const [isNearbyLoading, setIsNearbyLoading] = useState(true)
+
+    const loadPets = useCallback(async () => {
+        try {
+            const items = await getPets()
+            setPets(items)
+        } catch (error) {
+            console.warn('Yakın hayvanlar yüklenemedi:', error)
+            setPets([])
+        }
+    }, [])
+
+    const loadCurrentLocation = useCallback(async () => {
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync()
+            if (status !== 'granted') {
+                setCurrentLocation(null)
+                setCurrentLocationLabel('Konum izni verilmedi')
+                return
+            }
+
+            const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+            const coords = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+            }
+
+            setCurrentLocation(coords)
+
+            try {
+                const geocodes = await Location.reverseGeocodeAsync(coords)
+                const place = geocodes?.[0]
+                const label = getBestLocationLabel({
+                    city: place?.city,
+                    district: place?.district || place?.subregion,
+                    neighborhood: place?.subregion || place?.name,
+                })
+                setCurrentLocationLabel(label || 'Konum bilgisi alınamadı')
+            } catch (error) {
+                setCurrentLocationLabel('Konum bilgisi alınamadı')
+            }
+        } catch (error) {
+            setCurrentLocation(null)
+            setCurrentLocationLabel('Konum alınamadı')
+        }
+    }, [])
+
+    useFocusEffect(
+        useCallback(() => {
+            let active = true
+
+            const run = async () => {
+                setIsNearbyLoading(true)
+                await Promise.all([loadPets(), loadCurrentLocation()])
+                if (active) {
+                    setIsNearbyLoading(false)
+                }
+            }
+
+            run()
+
+            return () => {
+                active = false
+            }
+        }, [loadPets, loadCurrentLocation])
+    )
+
+    const nearbyPets = useMemo(() => {
+        const userLocation = currentLocation
+
+        if (!userLocation) {
+            return pets.slice(0, 6).map((pet) => ({
+                ...pet,
+                distanceKm: null,
+                proximityScore: 0,
+                locationLabel: getPetLocationLabel(pet),
+            }))
+        }
+
+        return pets
+            .map((pet) => {
+                const petCoords = Number.isFinite(Number(pet?.latitude)) && Number.isFinite(Number(pet?.longitude))
+                    ? { latitude: Number(pet.latitude), longitude: Number(pet.longitude) }
+                    : null
+                const distanceKm = userLocation && petCoords ? getDistanceKm(userLocation, petCoords) : null
+                const sameNeighborhood = normalizeText(pet?.neighborhood) && normalizeText(pet?.neighborhood) === normalizeText(currentLocation?.neighborhood)
+                const sameDistrict = normalizeText(pet?.district) && normalizeText(pet?.district) === normalizeText(currentLocation?.district)
+                const sameCity = normalizeText(pet?.city) && normalizeText(pet?.city) === normalizeText(currentLocation?.city)
+
+                let proximityScore = 0
+                if (sameNeighborhood) proximityScore = 3
+                else if (sameDistrict) proximityScore = 2
+                else if (sameCity) proximityScore = 1
+
+                if (distanceKm !== null) {
+                    if (distanceKm <= 1) proximityScore = Math.max(proximityScore, 3)
+                    else if (distanceKm <= 5) proximityScore = Math.max(proximityScore, 2)
+                    else if (distanceKm <= 15) proximityScore = Math.max(proximityScore, 1)
+                }
+
+                return {
+                    ...pet,
+                    distanceKm,
+                    proximityScore,
+                    locationLabel: getPetLocationLabel(pet),
+                }
+            })
+            .filter((pet) => pet.proximityScore > 0 || pet.distanceKm !== null)
+            .sort((left, right) => {
+                if (right.proximityScore !== left.proximityScore) {
+                    return right.proximityScore - left.proximityScore
+                }
+
+                if (left.distanceKm !== null && right.distanceKm !== null) {
+                    return left.distanceKm - right.distanceKm
+                }
+
+                return 0
+            })
+            .slice(0, 6)
+    }, [pets, currentLocation])
 
     useEffect(() => {
         const flash = route.params && route.params.authFlash
@@ -180,12 +336,21 @@ export default function HomePage() {
                     </Pressable>
                 </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
-                    <NearbyAnimals />
-                    <NearbyAnimals />
-                    <NearbyAnimals />
-                    <NearbyAnimals />
-                    <NearbyAnimals />
-                    <NearbyAnimals />
+                    {isNearbyLoading ? (
+                        <View style={{ width: 210, minHeight: 240, justifyContent: 'center', alignItems: 'center' }}>
+                            <ActivityIndicator size="small" color={getColor('--light-six')} />
+                        </View>
+                    ) : nearbyPets.length > 0 ? (
+                        nearbyPets.map((pet) => (
+                            <NearbyAnimals key={pet.id} pet={pet} />
+                        ))
+                    ) : (
+                        <View style={{ width: 260, padding: 16 }}>
+                            <Text style={{ color: getColor('--light-six'), fontSize: 14 }}>
+                                Yakında eşleşen hayvan bulunamadı.
+                            </Text>
+                        </View>
+                    )}
                 </ScrollView>
 
             </View>

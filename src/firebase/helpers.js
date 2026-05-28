@@ -4,7 +4,10 @@ import {
     signInWithEmailAndPassword,
     signOut as firebaseSignOut,
     sendPasswordResetEmail,
+    EmailAuthProvider,
+    reauthenticateWithCredential,
     updateEmail as fbUpdateEmail,
+    verifyBeforeUpdateEmail as fbVerifyBeforeUpdateEmail,
     updatePassword as fbUpdatePassword,
     deleteUser as fbDeleteUser,
 } from 'firebase/auth';
@@ -82,6 +85,9 @@ export async function getUserProfile(uid) {
         if (!snap.exists()) return null;
         return { id: snap.id, ...snap.data() };
     } catch (err) {
+        if (err?.code === 'permission-denied' || err?.code === 'firestore/permission-denied' || err?.code === 'missing-or-insufficient-permissions') {
+            return null;
+        }
         console.error('getUserProfile error', err);
         throw err;
     }
@@ -144,8 +150,13 @@ export async function updateAuthEmail(newEmail) {
     try {
         if (!auth.currentUser) throw new Error('Kullanıcı oturumu yok');
         await fbUpdateEmail(auth.currentUser, newEmail);
-        return true;
+        return { status: 'updated' };
     } catch (err) {
+        if (err?.code === 'auth/operation-not-allowed') {
+            // Some Firebase projects require verifying the new email before applying it.
+            await fbVerifyBeforeUpdateEmail(auth.currentUser, newEmail);
+            return { status: 'verification-required' };
+        }
         console.error('updateAuthEmail error', err);
         throw err;
     }
@@ -158,6 +169,20 @@ export async function updateAuthPassword(newPassword) {
         return true;
     } catch (err) {
         console.error('updateAuthPassword error', err);
+        throw err;
+    }
+}
+
+export async function reauthenticateWithPassword(email, password) {
+    try {
+        if (!auth.currentUser) throw new Error('Kullanıcı oturumu yok');
+        if (!email) throw new Error('Kullanıcı e-postası yok');
+
+        const credential = EmailAuthProvider.credential(email, password);
+        await reauthenticateWithCredential(auth.currentUser, credential);
+        return true;
+    } catch (err) {
+        console.error('reauthenticateWithPassword error', err);
         throw err;
     }
 }
@@ -210,6 +235,78 @@ export async function getPetById(petId) {
     const snap = await getDoc(petRef);
     if (!snap.exists()) return null;
     return { id: snap.id, ...snap.data() };
+}
+
+export async function addFeedRecord(petId, data) {
+    if (!petId) throw new Error('Pet id is required');
+    const col = collection(db, 'pets', petId, 'feeds');
+    const docRef = await addDoc(col, data);
+    return { id: docRef.id, ...data };
+}
+
+export async function addTreatmentRecord(petId, data) {
+    if (!petId) throw new Error('Pet id is required');
+    const col = collection(db, 'pets', petId, 'treatments');
+    const docRef = await addDoc(col, data);
+    return { id: docRef.id, ...data };
+}
+
+export async function addLocationRecord(petId, data) {
+    if (!petId) throw new Error('Pet id is required');
+    const col = collection(db, 'pets', petId, 'locations');
+    const docRef = await addDoc(col, data);
+
+    // attempt to update pet's latest coords/labels
+    try {
+        const { latitude, longitude, city, district, neighborhood, date } = data;
+        const updateData = {};
+        if (latitude !== undefined && longitude !== undefined) {
+            updateData.latitude = latitude;
+            updateData.longitude = longitude;
+        }
+        if (city) updateData.city = city;
+        if (district) updateData.district = district;
+        if (neighborhood) updateData.neighborhood = neighborhood;
+        if (date) updateData.lastSeenAt = date;
+        if (Object.keys(updateData).length) {
+            await updateDoc(doc(db, 'pets', petId), updateData);
+        }
+    } catch (err) {
+        console.warn('failed to update pet latest location', err);
+    }
+
+    return { id: docRef.id, ...data };
+}
+
+export async function getPetRecords(petId, type) {
+    if (!petId) return [];
+    const allowed = ['feeds', 'treatments', 'locations'];
+    if (!allowed.includes(type)) return [];
+    const col = collection(db, 'pets', petId, type);
+    const snap = await getDocs(col);
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    const parseDateDMY = (s) => {
+        if (!s || typeof s !== 'string') return NaN;
+        const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (!m) return NaN;
+        const day = Number(m[1]);
+        const month = Number(m[2]);
+        const year = Number(m[3]);
+        return new Date(year, month - 1, day).getTime();
+    }
+
+    const getTs = (item) => {
+        const d1 = parseDateDMY(item.date)
+        if (!Number.isNaN(d1)) return d1
+        if (item.createdAt) {
+            const t = Date.parse(item.createdAt)
+            if (!Number.isNaN(t)) return t
+        }
+        return 0
+    }
+
+    return items.sort((a, b) => getTs(b) - getTs(a));
 }
 
 export function uploadImage(file, path = 'images') {

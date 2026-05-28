@@ -9,7 +9,9 @@ service cloud.firestore {
                     // basit tip doğrulamaları
                     && request.resource.data.email is string
                     && request.resource.data.username is string;
-      allow read, update, delete: if request.auth != null && request.auth.uid == userId;
+      // Allow authenticated users to read profiles (project choice A)
+      allow read: if request.auth != null;
+      allow update, delete: if request.auth != null && request.auth.uid == userId;
     }
 
     // pets koleksiyonu: örnek yetkilendirme
@@ -25,6 +27,13 @@ service cloud.firestore {
                               resource.data.ownerId == request.auth.uid
                               || resource.data.createdByUid == request.auth.uid
                             );
+      // Allow reading and adding records in subcollections like feeds, treatments, locations
+      match /{subCollection=**} {
+        allow read: if true;
+        allow create: if request.auth != null;
+        // only the creator can update/delete their records
+        allow update, delete: if request.auth != null && resource.data.addedBy == request.auth.uid;
+      }
     }
   }
 }

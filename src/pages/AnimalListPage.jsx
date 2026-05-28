@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getColor } from '../css/theme';
 import AnimalCard from '../components/animalCard';
 import { getPets } from '../firebase/helpers';
+import { getEstimatedPetAge } from '../utils/petAge';
 
 const CITY_URL = 'https://raw.githubusercontent.com/metinyildirimnet/turkiye-adresler-json/master/sehirler.json';
 const DISTRICT_URL = 'https://raw.githubusercontent.com/metinyildirimnet/turkiye-adresler-json/master/ilceler.json';
@@ -297,7 +298,7 @@ export default function AnimalListPage() {
         if (neighborhood) tags.push({ key: 'neighborhood', label: `Mahalle: ${neighborhood}` });
         if (selectedSpecies) tags.push({ key: 'species', label: `Tür: ${selectedSpecies}` });
         if (selectedBreed) tags.push({ key: 'breed', label: `Cins: ${selectedBreed}` });
-        if (animalAge) tags.push({ key: 'age', label: `Yaş: ${animalAge}` });
+        if (animalAge) tags.push({ key: 'age', label: `Tahmini Yaş: ${animalAge}` });
 
         setAppliedFilterTags(tags);
         closeFilterModal();
@@ -375,7 +376,7 @@ export default function AnimalListPage() {
             if (neighborhood && pet.neighborhood !== neighborhood) return false;
             if (selectedSpecies && pet.type !== selectedSpecies) return false;
             if (selectedBreed && pet.breed !== selectedBreed) return false;
-            if (animalAge && String(pet.age) !== String(animalAge)) return false;
+            if (animalAge && String(getEstimatedPetAge(pet) ?? '') !== String(animalAge)) return false;
 
             if (normalizedSearch) {
                 const haystack = [pet.name, pet.type, pet.breed, pet.city, pet.district, pet.neighborhood]
@@ -567,7 +568,7 @@ export default function AnimalListPage() {
                                         </Text>
                                     </Pressable>
 
-                                    <Text style={styles.inputLabel}>Yaş</Text>
+                                    <Text style={styles.inputLabel}>Tahmini Yaş</Text>
                                     <TextInput
                                         value={animalAge}
                                         onChangeText={setAnimalAge}

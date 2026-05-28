@@ -1,4 +1,4 @@
-import { StyleSheet, ScrollView, Image, Dimensions, View, Text, TouchableOpacity, Pressable, Modal, TextInput, Alert, Animated } from 'react-native'
+import { StyleSheet, ScrollView, Image, Dimensions, View, Text, TouchableOpacity, Pressable, Modal, TextInput, Alert, Animated, ActivityIndicator } from 'react-native'
 import React, { useRef, useState, useEffect, useCallback } from 'react'
 import { getColor } from '../css/theme'
 import { Ionicons } from '@expo/vector-icons'
@@ -8,7 +8,7 @@ import * as FileSystem from 'expo-file-system'
 import { useNavigation, useFocusEffect } from '@react-navigation/native'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from '../firebase/config'
-import { getUserProfile, updateUserProfile, createUserProfile, updateAuthEmail, updateAuthPassword, deleteUserAccount, getUserPets, getUserFavoritePets } from '../firebase/helpers'
+import { getUserProfile, updateUserProfile, createUserProfile, updateAuthEmail, updateAuthPassword, reauthenticateWithPassword, deleteUserAccount, getUserPets, getUserFavoritePets } from '../firebase/helpers'
 import { signOut as firebaseSignOut } from '../firebase/helpers'
 
 const { height: screenHeight } = Dimensions.get('window')
@@ -37,75 +37,98 @@ const profileRecordsBySection = {
     'Tedavi Kayıtlarım': [
         { title: 'Karabaş', subtitle: 'Pati pansumanı • Temizlik ve bandaj', date: '21.03.2026' },
     ],
-    'Konum Kayıtlarım': [
-        { animal: 'Karabaş', location: 'Beşiktaş • Ihlamurdere Cd.', updatedAt: '28.03.2026 13:10' },
-        { animal: 'Pamuk', location: 'Kadıköy • Moda Sahili', updatedAt: '27.03.2026 18:44' },
-    ],
+}
+
+const formatRecordDate = (value) => {
+    if (!value) return '—'
+
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+        return String(value)
+    }
+
+    return date.toLocaleDateString('tr-TR')
+}
+
+const buildAddedAnimalRecords = (pets = []) => {
+    return pets.map((pet) => {
+        const locationParts = [pet.city, pet.district, pet.neighborhood].filter(Boolean)
+        const secondaryParts = [pet.type, pet.breed].filter(Boolean)
+
+        return {
+            title: pet.name || 'Hayvan adı yok',
+            subtitle: [...secondaryParts, locationParts.join(' • ')].filter(Boolean).join(' • ') || 'Bilgi yok',
+            date: `Eklenme: ${formatRecordDate(pet.createdAt)}`,
+            pet,
+        }
+    })
+}
+
+const getRecordsForSection = (sectionTitle, pets = []) => {
+    if (sectionTitle === 'Eklediğim Hayvanlar') {
+        return buildAddedAnimalRecords(pets)
+    }
+
+    return profileRecordsBySection[sectionTitle] || []
 }
 
 export default function ProfilePage() {
     const navigation = useNavigation()
-    const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false)
-    const [isRecordsModalVisible, setIsRecordsModalVisible] = useState(false)
-    const [selectedSectionTitle, setSelectedSectionTitle] = useState('')
-    const [addedPets, setAddedPets] = useState([])
-    const [favoritePets, setFavoritePets] = useState([])
-
-    const [profileImageUri, setProfileImageUri] = useState(null)
-    const [registrationInfo, setRegistrationInfo] = useState({
-        fullName: 'İSİM SOYİSİM',
-        username: 'kullaniciadi',
-        email: 'ornek@email.com',
-        birthDate: 'GG/AA/YYYY',
-        city: 'Şehir',
-        createdAt: '',
-        password: '',
-        confirmPassword: '',
-    })
-    const [editableRegistrationInfo, setEditableRegistrationInfo] = useState(registrationInfo)
     const recordsDrawerTranslateX = useRef(new Animated.Value(420)).current
 
-    const isLocationSection = selectedSectionTitle === 'Konum Kayıtlarım'
+    const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false)
+    const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false)
+    const [isRecordsModalVisible, setIsRecordsModalVisible] = useState(false)
+    const [selectedSectionTitle, setSelectedSectionTitle] = useState('')
+    const [selectedSectionRecords, setSelectedSectionRecords] = useState([])
+
     const isFavoriteSection = selectedSectionTitle === 'Favori Hayvanlarım'
     const isAddedAnimalsSection = selectedSectionTitle === 'Eklediğim Hayvanlar'
     const isFeedingSection = selectedSectionTitle === 'Besleme Kayıtlarım'
     const isTreatmentSection = selectedSectionTitle === 'Tedavi Kayıtlarım'
-    const selectedSectionRecords = isAddedAnimalsSection
-        ? addedPets.map((pet) => ({
-            title: pet.name || 'Hayvan',
-            subtitle: `${pet.type || '-'} • ${pet.locationLabel || [pet.city, pet.district, pet.neighborhood].filter(Boolean).join(' • ') || 'Konum yok'}`,
-            date: pet.createdAt ? new Date(pet.createdAt).toLocaleDateString('tr-TR') : '—',
-            pet,
-        }))
-        : isFavoriteSection
-            ? favoritePets.map((pet) => ({
-                title: pet.name || 'Hayvan',
-                subtitle: `${pet.type || '-'} • ${pet.locationLabel || [pet.city, pet.district, pet.neighborhood].filter(Boolean).join(' • ') || 'Konum yok'}`,
-                date: pet.createdAt ? new Date(pet.createdAt).toLocaleDateString('tr-TR') : '—',
-                pet,
-            }))
-            : profileRecordsBySection[selectedSectionTitle] || []
+    const isLocationSection = selectedSectionTitle === 'Konum Kayıtlarım'
 
-    const openSettingsModal = () => {
-        setEditableRegistrationInfo(registrationInfo)
-        setIsSettingsModalVisible(true)
-    }
+    const [registrationInfo, setRegistrationInfo] = useState({
+        fullName: 'İSİM SOYİSİM',
+        username: 'kullaniciadi',
+        email: '',
+        birthDate: '',
+        city: '',
+        createdAt: '',
+    })
 
-    const closeSettingsModal = () => {
-        setIsSettingsModalVisible(false)
-    }
+    const [editableRegistrationInfo, setEditableRegistrationInfo] = useState({
+        fullName: '',
+        username: '',
+        email: '',
+        birthDate: '',
+        city: '',
+        password: '',
+        confirmPassword: '',
+    })
+
+    const [profileImageUri, setProfileImageUri] = useState(null)
+    const [addedPets, setAddedPets] = useState([])
+    const [favoritePets, setFavoritePets] = useState([])
+
+    const [deletePassword, setDeletePassword] = useState('')
+    const [deleteError, setDeleteError] = useState('')
+    const [isDeleting, setIsDeleting] = useState(false)
 
     const openRecordsModal = (sectionTitle) => {
         setSelectedSectionTitle(sectionTitle)
+        setSelectedSectionRecords(getRecordsForSection(sectionTitle, addedPets))
         setIsRecordsModalVisible(true)
         recordsDrawerTranslateX.setValue(420)
-
         Animated.timing(recordsDrawerTranslateX, {
             toValue: 0,
             duration: 260,
             useNativeDriver: true,
         }).start()
     }
+
+    const openSettingsModal = () => setIsSettingsModalVisible(true)
+    const closeSettingsModal = () => setIsSettingsModalVisible(false)
 
     const closeRecordsModal = () => {
         Animated.timing(recordsDrawerTranslateX, {
@@ -159,10 +182,17 @@ export default function ProfilePage() {
 
         (async () => {
             try {
+                let emailForProfileSave = sanitizedData.email
+                let emailVerificationSent = false
+
                 // 1) update auth email if changed
                 if (sanitizedData.email && sanitizedData.email !== registrationInfo.email) {
                     try {
-                        await updateAuthEmail(sanitizedData.email)
+                        const emailUpdateResult = await updateAuthEmail(sanitizedData.email)
+                        if (emailUpdateResult?.status === 'verification-required') {
+                            emailForProfileSave = registrationInfo.email
+                            emailVerificationSent = true
+                        }
                     } catch (err) {
                         console.error('updateAuthEmail failed', err)
                         if (err && err.code === 'auth/requires-recent-login') {
@@ -195,7 +225,7 @@ export default function ProfilePage() {
                 const profileToSave = {
                     fullName: sanitizedData.fullName,
                     username: sanitizedData.username,
-                    email: sanitizedData.email,
+                    email: emailForProfileSave,
                     birthDate: sanitizedData.birthDate,
                     city: sanitizedData.city,
                 }
@@ -220,7 +250,11 @@ export default function ProfilePage() {
                 }
 
                 closeSettingsModal()
-                Alert.alert('Başarılı', 'Profil bilgileriniz kaydedildi.')
+                if (emailVerificationSent) {
+                    Alert.alert('Doğrulama Gerekli', 'Yeni e-posta adresinize doğrulama bağlantısı gönderildi. Bağlantıyı onayladıktan sonra e-posta adresiniz güncellenecektir.')
+                } else {
+                    Alert.alert('Başarılı', 'Profil bilgileriniz kaydedildi.')
+                }
             } catch (err) {
                 console.error('save profile flow error', err)
                 Alert.alert('Hata', err.message || 'Profil kaydedilemedi')
@@ -254,10 +288,22 @@ export default function ProfilePage() {
                     }
 
                     if (profile) {
+                        if (u.email && profile.email !== u.email) {
+                            try {
+                                await updateUserProfile(u.uid, { email: u.email })
+                                profile = {
+                                    ...profile,
+                                    email: u.email,
+                                }
+                            } catch (syncErr) {
+                                console.warn('profile email sync failed', syncErr)
+                            }
+                        }
+
                         const mapped = {
                             fullName: profile.fullName || 'İSİM SOYİSİM',
                             username: profile.username || 'kullaniciadi',
-                            email: profile.email || 'ornek@email.com',
+                            email: u.email || profile.email || 'ornek@email.com',
                             birthDate: profile.birthDate || 'GG/AA/YYYY',
                             city: profile.city || 'Şehir',
                             createdAt: profile.createdAt || (u && u.metadata && u.metadata.creationTime) || '',
@@ -334,6 +380,12 @@ export default function ProfilePage() {
             }
         }, [])
     )
+
+    useEffect(() => {
+        if (!isRecordsModalVisible || !selectedSectionTitle) return
+
+        setSelectedSectionRecords(getRecordsForSection(selectedSectionTitle, addedPets))
+    }, [addedPets, isRecordsModalVisible, selectedSectionTitle])
 
     const handlePickProfileImage = async () => {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync()
@@ -478,35 +530,55 @@ export default function ProfilePage() {
     }
 
     const handleDeleteAccount = () => {
-        Alert.alert('Hesabı Sil', 'Bu işlem geri alınamaz. Devam etmek istiyor musun?', [
-            { text: 'Vazgeç', style: 'cancel' },
-            {
-                text: 'Hesabı Sil',
-                style: 'destructive',
-                onPress: async () => {
-                    const user = auth.currentUser
-                    if (!user) {
-                        Alert.alert('Hata', 'Kullanıcı oturumu bulunamadı.')
-                        return
-                    }
-                    try {
-                        await deleteUserAccount(user.uid)
-                        try {
-                            await firebaseSignOut()
-                        } catch (_) { }
-                        Alert.alert('Hesap Silindi', 'Hesabınız başarıyla silindi.')
-                        navigation.navigate('Ana Sayfa')
-                    } catch (err) {
-                        console.error('delete account error', err)
-                        if (err && err.code === 'auth/requires-recent-login') {
-                            Alert.alert('Oturum Yenileme Gerekli', 'Hesabı silmek için yeniden giriş yapmanız gerekiyor. Lütfen çıkış yapıp tekrar giriş yapın ve tekrar deneyin.')
-                        } else {
-                            Alert.alert('Hata', err.message || 'Hesap silinemedi')
-                        }
-                    }
-                }
-            },
-        ])
+        setDeleteError('')
+        setDeletePassword('')
+        setIsDeleteModalVisible(true)
+    }
+
+    const closeDeleteModal = () => {
+        setIsDeleteModalVisible(false)
+        setDeletePassword('')
+        setDeleteError('')
+    }
+
+    const confirmDeleteAccount = async () => {
+        const user = auth.currentUser
+        if (!user) {
+            Alert.alert('Hata', 'Kullanıcı oturumu bulunamadı.')
+            return
+        }
+
+        const password = deletePassword.trim()
+        if (!password) {
+            setDeleteError('Lütfen hesabı silmek için mevcut şifreni gir.')
+            return
+        }
+
+        setDeleteError('')
+        setIsDeleting(true)
+        try {
+            await reauthenticateWithPassword(user.email || registrationInfo.email, password)
+            await deleteUserAccount(user.uid)
+            try {
+                await firebaseSignOut()
+            } catch (_) { }
+
+            closeDeleteModal()
+            setDeletePassword('')
+            Alert.alert('Hesap Silindi', 'Hesabınız başarıyla silindi.')
+            navigation.navigate('Ana Sayfa')
+        } catch (err) {
+            console.error('confirm delete error', err)
+            if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+                setDeleteError('Şifre yanlış. Lütfen tekrar deneyin.')
+            } else if (err?.code === 'auth/requires-recent-login') {
+                setDeleteError('Bu işlem için oturumun yenilenmesi gerekiyor. Lütfen çıkış yapıp tekrar giriş yapın.')
+            } else {
+                setDeleteError(err.message || 'Hesap silinemedi')
+            }
+        } finally {
+            setIsDeleting(false)
+        }
     }
 
     return (
@@ -699,6 +771,56 @@ export default function ProfilePage() {
                                 <Text style={styles.modalDangerButtonText}>Hesabı Sil</Text>
                             </Pressable>
                         </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={isDeleteModalVisible}
+                transparent
+                animationType='fade'
+                statusBarTranslucent
+                onRequestClose={closeDeleteModal}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalCard, styles.deleteModalCard]}>
+                        <Text style={styles.deleteModalTitle}>Hesabı Sil</Text>
+                        <Text style={styles.deleteModalSubtitle}>Bu işlem geri alınamaz. Devam etmek için mevcut şifreni girmen gerekiyor.</Text>
+
+                        <TextInput
+                            style={styles.deleteModalInput}
+                            value={deletePassword}
+                            onChangeText={(value) => {
+                                setDeletePassword(value)
+                                if (deleteError) {
+                                    setDeleteError('')
+                                }
+                            }}
+                            placeholder='Mevcut şifren'
+                            placeholderTextColor={getColor('--light-six')}
+                            secureTextEntry
+                            autoCapitalize='none'
+                        />
+
+                        {!!deleteError && <Text style={styles.deleteErrorText}>{deleteError}</Text>}
+
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+                            <Pressable
+                                style={styles.deleteModalCancelButton}
+                                onPress={closeDeleteModal}
+                                disabled={isDeleting}
+                            >
+                                <Text style={styles.deleteModalCancelText}>Vazgeç</Text>
+                            </Pressable>
+
+                            <Pressable
+                                style={styles.deleteModalDangerButton}
+                                onPress={confirmDeleteAccount}
+                                disabled={isDeleting || !deletePassword.trim()}
+                            >
+                                {isDeleting ? <ActivityIndicator color='#fff' /> : <Text style={styles.deleteModalDangerText}>Hesabı Sil</Text>}
+                            </Pressable>
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -1140,6 +1262,76 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '700',
         color: '#fff',
+    },
+
+    /* Delete modal compact styles */
+    deleteModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+    },
+    deleteModalCard: {
+        width: '94%',
+        maxWidth: 420,
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        padding: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.12,
+        shadowRadius: 12,
+        elevation: 10,
+    },
+    deleteModalTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    deleteModalSubtitle: {
+        marginTop: 6,
+        color: '#374151',
+        fontSize: 13,
+    },
+    deleteModalInput: {
+        marginTop: 12,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        backgroundColor: '#fff',
+        fontSize: 14,
+    },
+    deleteErrorText: {
+        marginTop: 8,
+        color: '#B91C1C',
+        fontSize: 13,
+    },
+    deleteModalCancelButton: {
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 10,
+        backgroundColor: '#fff',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: '#D1D5DB',
+    },
+    deleteModalCancelText: {
+        color: '#111827',
+        fontWeight: '600',
+    },
+    deleteModalDangerButton: {
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 10,
+        backgroundColor: '#d9534f',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    deleteModalDangerText: {
+        color: '#fff',
+        fontWeight: '700',
     },
 
 
