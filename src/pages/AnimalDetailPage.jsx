@@ -434,6 +434,11 @@ export default function AnimalDetailPage() {
         setEditForm(nextAnimal)
     }, [route.params?.pet])
 
+    // clear history records when viewing a different pet to avoid showing previous pet's data
+    useEffect(() => {
+        setHistoryRecords({ feed: [], treatment: [], location: [] })
+    }, [animalData.id])
+
     useEffect(() => {
         let active = true
 
@@ -998,15 +1003,14 @@ export default function AnimalDetailPage() {
     }
 
     const handleOpenMapAtLastLocation = () => {
-        const lat = animalData.latitude || (animalData.lastSeenAtRaw ? null : null)
+        const lat = animalData.latitude || null
         const lon = animalData.longitude || null
-        if (lat && lon) {
-            navigation.navigate('AnimalMap', { focusPetId: animalData.id, focusCoords: { latitude: lat, longitude: lon } })
-            return
-        }
 
-        // fallback: open map without focus
-        navigation.navigate('AnimalMap')
+        // always pass focusPetId so MapPage can focus when latest location becomes available
+        const params = { focusPetId: animalData.id }
+        if (lat && lon) params.focusCoords = { latitude: lat, longitude: lon }
+
+        navigation.navigate('AnimalMap', params)
     }
 
     if (!hasPetData) {

@@ -7,6 +7,8 @@ import * as FileSystem from 'expo-file-system/legacy'
 import NearbyAnimals from '../components/nearbyAnimalsCard'
 import { getColor } from '../css/theme'
 import { getPets } from '../firebase/helpers'
+import { db } from '../firebase/config'
+import { collection as fsCollection, collectionGroup as fsCollectionGroup, onSnapshot as fsOnSnapshot } from 'firebase/firestore'
 
 const DEFAULT_DAILY_INFO = 'Uygulamamızda her gün yeni bir hayvan bilgisi paylaşarak, sokak hayvanları hakkında daha fazla bilgi edinmeni sağlıyoruz.'
 
@@ -61,19 +63,14 @@ export default function HomePage() {
     const [flashText, setFlashText] = useState('')
     const [dailyInfo, setDailyInfo] = useState(DEFAULT_DAILY_INFO)
     const [pets, setPets] = useState([])
+    const [feedCount, setFeedCount] = useState(0)
+    const [treatmentCount, setTreatmentCount] = useState(0)
+    const [locationCount, setLocationCount] = useState(0)
     const [currentLocation, setCurrentLocation] = useState(null)
     const [currentLocationLabel, setCurrentLocationLabel] = useState('Konum alınıyor...')
     const [isNearbyLoading, setIsNearbyLoading] = useState(true)
 
-    const loadPets = useCallback(async () => {
-        try {
-            const items = await getPets()
-            setPets(items)
-        } catch (error) {
-            console.warn('Yakın hayvanlar yüklenemedi:', error)
-            setPets([])
-        }
-    }, [])
+    // pets are loaded via realtime subscription below
 
     const loadCurrentLocation = useCallback(async () => {
         try {
@@ -116,10 +113,8 @@ export default function HomePage() {
 
             const run = async () => {
                 setIsNearbyLoading(true)
-                await Promise.all([loadPets(), loadCurrentLocation()])
-                if (active) {
-                    setIsNearbyLoading(false)
-                }
+                await loadCurrentLocation()
+                if (active) setIsNearbyLoading(false)
             }
 
             run()
@@ -127,20 +122,41 @@ export default function HomePage() {
             return () => {
                 active = false
             }
-        }, [loadPets, loadCurrentLocation])
+        }, [loadCurrentLocation])
     )
+
+    useEffect(() => {
+        setIsNearbyLoading(true)
+        const col = fsCollection(db, 'pets')
+        const unsub = fsOnSnapshot(col, (snap) => {
+            try {
+                const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                setPets(all)
+            } catch (err) {
+                console.error('pets snapshot processing error', err)
+                setPets([])
+            } finally {
+                setIsNearbyLoading(false)
+            }
+        }, (err) => {
+            console.error('pets snapshot error', err)
+            setPets([])
+            setIsNearbyLoading(false)
+        })
+
+        return () => {
+            try { unsub && unsub() } catch (e) { }
+        }
+    }, [])
 
     const nearbyPets = useMemo(() => {
         const userLocation = currentLocation
 
-        if (!userLocation) {
-            return pets.slice(0, 6).map((pet) => ({
-                ...pet,
-                distanceKm: null,
-                proximityScore: 0,
-                locationLabel: getPetLocationLabel(pet),
-            }))
-        }
+        // If we don't have the user's current location, don't show nearby animals
+        if (!userLocation) return []
+
+        // Only include pets within 5 km of the user's current position
+        const MAX_DISTANCE_KM = 5
 
         return pets
             .map((pet) => {
@@ -148,38 +164,18 @@ export default function HomePage() {
                     ? { latitude: Number(pet.latitude), longitude: Number(pet.longitude) }
                     : null
                 const distanceKm = userLocation && petCoords ? getDistanceKm(userLocation, petCoords) : null
-                const sameNeighborhood = normalizeText(pet?.neighborhood) && normalizeText(pet?.neighborhood) === normalizeText(currentLocation?.neighborhood)
-                const sameDistrict = normalizeText(pet?.district) && normalizeText(pet?.district) === normalizeText(currentLocation?.district)
-                const sameCity = normalizeText(pet?.city) && normalizeText(pet?.city) === normalizeText(currentLocation?.city)
-
-                let proximityScore = 0
-                if (sameNeighborhood) proximityScore = 3
-                else if (sameDistrict) proximityScore = 2
-                else if (sameCity) proximityScore = 1
-
-                if (distanceKm !== null) {
-                    if (distanceKm <= 1) proximityScore = Math.max(proximityScore, 3)
-                    else if (distanceKm <= 5) proximityScore = Math.max(proximityScore, 2)
-                    else if (distanceKm <= 15) proximityScore = Math.max(proximityScore, 1)
-                }
 
                 return {
                     ...pet,
                     distanceKm,
-                    proximityScore,
                     locationLabel: getPetLocationLabel(pet),
                 }
             })
-            .filter((pet) => pet.proximityScore > 0 || pet.distanceKm !== null)
+            .filter((pet) => pet.distanceKm !== null && pet.distanceKm <= MAX_DISTANCE_KM)
             .sort((left, right) => {
-                if (right.proximityScore !== left.proximityScore) {
-                    return right.proximityScore - left.proximityScore
-                }
-
                 if (left.distanceKm !== null && right.distanceKm !== null) {
                     return left.distanceKm - right.distanceKm
                 }
-
                 return 0
             })
             .slice(0, 6)
@@ -195,6 +191,45 @@ export default function HomePage() {
             setTimeout(() => setFlashVisible(false), 1200)
         }
     }, [route.params])
+
+    // realtime counts for feeds, treatments and locations across all pets
+    useEffect(() => {
+        try {
+            const feedsCol = fsCollectionGroup(db, 'feeds')
+            const treatmentsCol = fsCollectionGroup(db, 'treatments')
+            const locationsCol = fsCollectionGroup(db, 'locations')
+
+            const unsubFeeds = fsOnSnapshot(feedsCol, (snap) => {
+                setFeedCount(snap.size)
+            }, (err) => {
+                console.error('feeds collectionGroup snapshot error', err)
+                setFeedCount(0)
+            })
+
+            const unsubTreatments = fsOnSnapshot(treatmentsCol, (snap) => {
+                setTreatmentCount(snap.size)
+            }, (err) => {
+                console.error('treatments collectionGroup snapshot error', err)
+                setTreatmentCount(0)
+            })
+
+            const unsubLocations = fsOnSnapshot(locationsCol, (snap) => {
+                setLocationCount(snap.size)
+            }, (err) => {
+                console.error('locations collectionGroup snapshot error', err)
+                setLocationCount(0)
+            })
+
+            return () => {
+                try { unsubFeeds && unsubFeeds() } catch (e) { }
+                try { unsubTreatments && unsubTreatments() } catch (e) { }
+                try { unsubLocations && unsubLocations() } catch (e) { }
+            }
+        } catch (err) {
+            console.error('failed to setup collectionGroup listeners', err)
+            return undefined
+        }
+    }, [])
 
     useEffect(() => {
         let isMounted = true
@@ -265,40 +300,40 @@ export default function HomePage() {
             </View>
 
             <View style={{ flexDirection: 'row', marginTop: 10, justifyContent: 'center', marginLeft: 10, marginRight: 5 }}>
-                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 7, backgroundColor: '#e6624b', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
+                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 15, backgroundColor: '#e6624b', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
                         <Image source={require('../images/paw.png')} style={styles.statIcon} resizeMode='contain' />
-                        <Text style={styles.countText}>150</Text>
+                        <Text style={styles.countText}>{pets.length}</Text>
                     </View>
                     <View>
                         <Text style={styles.labelText}>Hayvan</Text>
                     </View>
 
                 </View>
-                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 7, backgroundColor: '#e4d825', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
+                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 15, backgroundColor: '#e4d825', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
                         <Image source={require('../images/dataImages/food.png')} style={styles.statIcon} resizeMode='contain' />
-                        <Text style={styles.countText}>200</Text>
+                        <Text style={styles.countText}>{feedCount}</Text>
                     </View>
                     <View>
                         <Text style={styles.labelText}>Besleme</Text>
                     </View>
 
                 </View>
-                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 7, backgroundColor: '#69c53e', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
+                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 15, backgroundColor: '#69c53e', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
                         <Image source={require('../images/dataImages/health.png')} style={styles.statIcon} resizeMode='contain' />
-                        <Text style={styles.countText}>170</Text>
+                        <Text style={styles.countText}>{treatmentCount}</Text>
                     </View>
                     <View>
                         <Text style={styles.labelText}>Tedavi</Text>
                     </View>
 
                 </View>
-                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 7, backgroundColor: '#5dabf9', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
+                <View style={{ flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginRight: 15, backgroundColor: '#5dabf9', padding: 10, borderRadius: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 3.84, elevation: 5 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
                         <Image source={require('../images/dataImages/map.png')} style={styles.statIcon} resizeMode='contain' />
-                        <Text style={styles.countText}>220</Text>
+                        <Text style={styles.countText}>{locationCount}</Text>
                     </View>
                     <View>
                         <Text style={styles.labelText}>Konum</Text>

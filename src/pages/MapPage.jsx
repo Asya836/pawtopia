@@ -4,7 +4,10 @@ import * as Location from 'expo-location'
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native'
 import { Ionicons } from '@expo/vector-icons'
 import MapView, { Callout, Marker } from 'react-native-maps'
-import { getPets } from '../firebase/helpers'
+// real-time subscriptions used instead of one-time getPets
+import { db } from '../firebase/config'
+import { collection as fsCollection, onSnapshot as fsOnSnapshot, query as fsQuery, orderBy as fsOrderBy, limit as fsLimit } from 'firebase/firestore'
+
 
 const DEFAULT_REGION = {
     latitude: 41.0082,
@@ -61,6 +64,52 @@ const buildRegionFromCoordinates = (coordinates = [], fallbackRegion = DEFAULT_R
     }
 }
 
+const PetMarker = React.memo(function PetMarker({ pet, onPress, styles, Ionicons }) {
+    const locationLabel = pet.locationLabel || [pet.city, pet.district, pet.neighborhood].filter(Boolean).join(' / ')
+
+    return (
+        <Marker
+            key={pet.id}
+            coordinate={pet.coordinate}
+            anchor={{ x: 0.5, y: 1 }}
+            onPress={() => onPress && onPress(pet)}
+        >
+            <View style={styles.petMarkerContainer}>
+                <View style={styles.petMarkerShadow}>
+                    <View style={styles.petMarkerCircle}>
+                        {pet.imageUrl ? (
+                            <Image source={{ uri: pet.imageUrl }} style={styles.petMarkerImage} resizeMode='cover' />
+                        ) : (
+                            <Ionicons name='paw' size={18} color='#fff' />
+                        )}
+                    </View>
+                </View>
+                <View style={styles.petMarkerTail} />
+            </View>
+
+            <Callout tooltip onPress={() => onPress && onPress(pet)}>
+                <View style={styles.calloutCard}>
+                    <Text style={styles.calloutTitle}>{pet.name || 'Hayvan'}</Text>
+                    <Text style={styles.calloutSubtitle}>{locationLabel || 'Konum bilgisi yok'}</Text>
+                    <Text style={styles.calloutMeta}>{formatLastSeenLabel(pet.lastSeenAt || pet.createdAt)}</Text>
+                    <Text style={styles.calloutLink}>Detaya git</Text>
+                </View>
+            </Callout>
+        </Marker>
+    )
+}, (prevProps, nextProps) => {
+    const a = prevProps.pet || {}
+    const b = nextProps.pet || {}
+    if (a.id !== b.id) return false
+    const ca = a.coordinate || {}
+    const cb = b.coordinate || {}
+    if (ca.latitude !== cb.latitude || ca.longitude !== cb.longitude) return false
+    if ((a.imageUrl || '') !== (b.imageUrl || '')) return false
+    if ((a.name || '') !== (b.name || '')) return false
+    if ((a.lastSeenAt || '') !== (b.lastSeenAt || '')) return false
+    return true
+})
+
 const formatLastSeenLabel = (value) => {
     if (!value) return 'Son görülme bilgisi yok'
 
@@ -85,6 +134,8 @@ export default function MapPage() {
     const [pets, setPets] = useState([]);
     const [isPetsLoading, setIsPetsLoading] = useState(true);
     const [isMapReady, setIsMapReady] = useState(false);
+    const [latestLocations, setLatestLocations] = useState({})
+    const locationUnsubsRef = useRef({})
 
     const ensureLocationPermission = async () => {
         const isServiceEnabled = await Location.hasServicesEnabledAsync();
@@ -101,19 +152,6 @@ export default function MapPage() {
 
         return true;
     };
-
-    const loadPets = useCallback(async () => {
-        try {
-            setIsPetsLoading(true)
-            const allPets = await getPets()
-            setPets(allPets.filter((pet) => toMarkerCoordinate(pet)))
-        } catch (error) {
-            console.error('loadPets error', error)
-            setPets([])
-        } finally {
-            setIsPetsLoading(false)
-        }
-    }, [])
 
     const loadCurrentLocation = async () => {
         try {
@@ -220,11 +258,94 @@ export default function MapPage() {
         };
     }, []);
 
-    useFocusEffect(
-        useCallback(() => {
-            loadPets()
-        }, [loadPets])
-    )
+    // subscribe to pets collection in realtime so map updates when locations change
+    useEffect(() => {
+        setIsPetsLoading(true)
+        const col = fsCollection(db, 'pets')
+        const unsub = fsOnSnapshot(col, (snap) => {
+            try {
+                const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                setPets(all)
+            } catch (err) {
+                console.error('pets snapshot processing error', err)
+                setPets([])
+            } finally {
+                setIsPetsLoading(false)
+            }
+        }, (err) => {
+            console.error('pets snapshot error', err)
+            setPets([])
+            setIsPetsLoading(false)
+        })
+
+        return () => {
+            try { unsub && unsub() } catch (e) { }
+        }
+    }, [])
+
+    // subscribe to each pet's latest location document and store it in `latestLocations`
+    useEffect(() => {
+        const currentUnsubs = locationUnsubsRef.current || {}
+
+        // add subscriptions for new pets
+        pets.forEach((pet) => {
+            if (!pet || !pet.id) return
+            if (currentUnsubs[pet.id]) return // already subscribed
+
+            try {
+                const locCol = fsCollection(db, 'pets', pet.id, 'locations')
+                const q = fsQuery(locCol, fsOrderBy('createdAt', 'desc'), fsLimit(1))
+                const unsubLoc = fsOnSnapshot(q, (snap) => {
+                    try {
+                        const doc = snap.docs[0]
+                        if (doc && doc.exists()) {
+                            const data = { id: doc.id, ...doc.data() }
+                            setLatestLocations((prev) => ({ ...prev, [pet.id]: data }))
+                        } else {
+                            setLatestLocations((prev) => {
+                                const next = { ...prev }
+                                delete next[pet.id]
+                                return next
+                            })
+                        }
+                    } catch (err) {
+                        console.error('locations snapshot processing error for pet', pet.id, err)
+                    }
+                }, (err) => {
+                    console.error('locations snapshot error for pet', pet.id, err)
+                })
+
+                currentUnsubs[pet.id] = unsubLoc
+            } catch (err) {
+                console.error('failed to subscribe to pet locations for', pet.id, err)
+            }
+        })
+
+        // remove subscriptions for pets that no longer exist
+        Object.keys(currentUnsubs).forEach((petId) => {
+            if (!pets.find((p) => p.id === petId)) {
+                try {
+                    currentUnsubs[petId] && currentUnsubs[petId]()
+                } catch (e) { }
+                delete currentUnsubs[petId]
+                setLatestLocations((prev) => {
+                    const next = { ...prev }
+                    delete next[petId]
+                    return next
+                })
+            }
+        })
+
+        locationUnsubsRef.current = currentUnsubs
+
+        return () => {
+            // cleanup all
+            try {
+                Object.values(locationUnsubsRef.current || {}).forEach((u) => { try { u && u() } catch (e) { } })
+            } catch (e) { }
+            locationUnsubsRef.current = {}
+        }
+    }, [pets, latestLocations])
 
     useEffect(() => {
         if (!isMapReady || hasCenteredMapRef.current) {
@@ -240,26 +361,67 @@ export default function MapPage() {
             DEFAULT_REGION
         )
 
-        mapRef.current?.animateToRegion(nextRegion, 500)
+        mapRef.current?.animateToRegion(nextRegion, 200)
         hasCenteredMapRef.current = true
     }, [currentLocation, isMapReady, pets])
 
     useEffect(() => {
-        // if navigation requested focus on a pet
+        // if navigation requested focus on a pet or explicit coords
         const focusCoords = route?.params?.focusCoords
+        const focusPetId = route?.params?.focusPetId
+
         if (focusCoords && mapRef.current) {
             mapRef.current.animateToRegion({
                 latitude: focusCoords.latitude,
                 longitude: focusCoords.longitude,
                 latitudeDelta: 0.01,
                 longitudeDelta: 0.01,
-            }, 600)
+            }, 200)
+            return
         }
-    }, [route?.params, isMapReady])
+
+        if (focusPetId && mapRef.current) {
+            // prefer the latest location document (if subscribed)
+            const latest = latestLocations[focusPetId]
+            if (latest && Number.isFinite(Number(latest.latitude)) && Number.isFinite(Number(latest.longitude))) {
+                mapRef.current.animateToRegion({
+                    latitude: Number(latest.latitude),
+                    longitude: Number(latest.longitude),
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                }, 200)
+                return
+            }
+
+            // fallback to pet document coordinates
+            const pet = pets.find((p) => p.id === focusPetId)
+            const petCoord = pet ? toMarkerCoordinate(pet) : null
+            if (petCoord) {
+                mapRef.current.animateToRegion({
+                    latitude: petCoord.latitude,
+                    longitude: petCoord.longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                }, 200)
+                return
+            }
+        }
+    }, [route?.params, isMapReady, latestLocations, pets])
 
     const petMarkers = useMemo(() => {
         return pets
             .map((pet) => {
+                // prefer latest location document if available
+                const latest = latestLocations[pet.id]
+                if (latest && Number.isFinite(Number(latest.latitude)) && Number.isFinite(Number(latest.longitude))) {
+                    return {
+                        ...pet,
+                        coordinate: { latitude: Number(latest.latitude), longitude: Number(latest.longitude) },
+                        locationLabel: [latest.city, latest.district, latest.neighborhood].filter(Boolean).join(' / ') || pet.locationLabel,
+                        lastSeenAt: latest.date || latest.createdAt || pet.lastSeenAt,
+                    }
+                }
+
                 const coordinate = toMarkerCoordinate(pet)
                 if (!coordinate) return null
 
@@ -269,7 +431,7 @@ export default function MapPage() {
                 }
             })
             .filter(Boolean)
-    }, [pets])
+    }, [pets, latestLocations])
 
     const initialRegion = useMemo(() => {
         const markerCoordinates = petMarkers.map((pet) => pet.coordinate)
@@ -291,8 +453,20 @@ export default function MapPage() {
     }, [currentLocation, petMarkers])
 
     const handleRecenterMap = async () => {
-        const coords = await loadCurrentLocation()
-        if (coords) {
+        // prefer already-known currentLocation to avoid extra permission prompts
+        let coords = currentLocation
+        if (!coords) {
+            coords = await loadCurrentLocation()
+        }
+
+        if (!coords) {
+            try {
+                setLocationError('Konum alınamadı. Lütfen izinleri kontrol edin.')
+            } catch (e) { }
+            return
+        }
+
+        try {
             mapRef.current?.animateToRegion(
                 {
                     latitude: coords.latitude,
@@ -300,8 +474,10 @@ export default function MapPage() {
                     latitudeDelta: 0.03,
                     longitudeDelta: 0.03,
                 },
-                500
+                200
             )
+        } catch (err) {
+            console.warn('recenter animate error', err)
         }
     }
 
@@ -318,7 +494,7 @@ export default function MapPage() {
                     latitudeDelta: 0.03,
                     longitudeDelta: 0.03,
                 },
-                500
+                200
             )
             hasCenteredMapRef.current = true
         }
@@ -335,38 +511,15 @@ export default function MapPage() {
                 showsMyLocationButton={false}
                 showsCompass={false}
             >
-                {petMarkers.map((pet) => {
-                    const locationLabel = pet.locationLabel || [pet.city, pet.district, pet.neighborhood].filter(Boolean).join(' / ')
-
-                    return (
-                        <Marker
-                            key={pet.id}
-                            coordinate={pet.coordinate}
-                            anchor={{ x: 0.5, y: 1 }}
-                            onPress={() => navigation.navigate('AnimalDetail', { pet })}
-                        >
-                            <View style={styles.petMarkerContainer}>
-                                <View style={styles.petMarkerCircle}>
-                                    {pet.imageUrl ? (
-                                        <Image source={{ uri: pet.imageUrl }} style={styles.petMarkerImage} resizeMode='cover' />
-                                    ) : (
-                                        <Ionicons name='paw' size={18} color='#fff' />
-                                    )}
-                                </View>
-                                <View style={styles.petMarkerTail} />
-                            </View>
-
-                            <Callout tooltip onPress={() => navigation.navigate('AnimalDetail', { pet })}>
-                                <View style={styles.calloutCard}>
-                                    <Text style={styles.calloutTitle}>{pet.name || 'Hayvan'}</Text>
-                                    <Text style={styles.calloutSubtitle}>{locationLabel || 'Konum bilgisi yok'}</Text>
-                                    <Text style={styles.calloutMeta}>{formatLastSeenLabel(pet.lastSeenAt || pet.createdAt)}</Text>
-                                    <Text style={styles.calloutLink}>Detaya git</Text>
-                                </View>
-                            </Callout>
-                        </Marker>
-                    )
-                })}
+                {petMarkers.map((pet) => (
+                    <PetMarker
+                        key={pet.id}
+                        pet={pet}
+                        styles={styles}
+                        Ionicons={Ionicons}
+                        onPress={(p) => navigation.navigate('AnimalDetail', { pet: p })}
+                    />
+                ))}
 
                 {currentLocation && (
                     <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }}>
@@ -439,16 +592,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
+    },
+    petMarkerImage: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+    },
+    petMarkerShadow: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.18,
         shadowRadius: 8,
         elevation: 6,
-    },
-    petMarkerImage: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 9999,
+        borderRadius: 27,
     },
     petMarkerTail: {
         width: 0,

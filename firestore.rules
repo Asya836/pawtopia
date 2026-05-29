@@ -14,6 +14,22 @@ service cloud.firestore {
       allow update, delete: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Allow read access to any feeds/treatments/locations subcollections (collectionGroup queries)
+    // WARNING: this makes these subcollections readable by anyone. If you want only authenticated
+    // users to read them, replace `if true` with `if request.auth != null`.
+    match /{path=**}/feeds/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /{path=**}/treatments/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /{path=**}/locations/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // pets koleksiyonu: örnek yetkilendirme
     match /pets/{docId} {
       allow read: if true;

@@ -8,7 +8,7 @@ import * as FileSystem from 'expo-file-system'
 import { useNavigation, useFocusEffect } from '@react-navigation/native'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from '../firebase/config'
-import { getUserProfile, updateUserProfile, createUserProfile, updateAuthEmail, updateAuthPassword, reauthenticateWithPassword, deleteUserAccount, getUserPets, getUserFavoritePets } from '../firebase/helpers'
+import { getUserProfile, updateUserProfile, createUserProfile, updateAuthEmail, updateAuthPassword, reauthenticateWithPassword, deleteUserAccount, getUserPets, getUserFavoritePets, getPetRecords } from '../firebase/helpers'
 import { signOut as firebaseSignOut } from '../firebase/helpers'
 
 const { height: screenHeight } = Dimensions.get('window')
@@ -22,21 +22,11 @@ const animalsInfoRows = [
 ]
 
 const profileRecordsBySection = {
-    'Eklediğim Hayvanlar': [
-        { title: 'Karabaş', subtitle: 'Köpek • Beşiktaş', date: '28.03.2026' },
-        { title: 'Pamuk', subtitle: 'Kedi • Kadıköy', date: '24.03.2026' },
-    ],
-    'Favori Hayvanlarım': [
-        { title: 'Tarçın', subtitle: 'Kedi • Üsküdar', date: '27.03.2026' },
-        { title: 'Leo', subtitle: 'Köpek • Şişli', date: '22.03.2026' },
-    ],
-    'Besleme Kayıtlarım': [
-        { title: 'Karabaş', subtitle: 'Mama bırakıldı • Kuru mama + su', date: '26.03.2026 09:40' },
-        { title: 'Pamuk', subtitle: 'Akşam beslemesi • Yaş mama', date: '25.03.2026 19:20' },
-    ],
-    'Tedavi Kayıtlarım': [
-        { title: 'Karabaş', subtitle: 'Pati pansumanı • Temizlik ve bandaj', date: '21.03.2026' },
-    ],
+    'Eklediğim Hayvanlar': [],
+    'Favori Hayvanlarım': [],
+    'Besleme Kayıtlarım': [],
+    'Tedavi Kayıtlarım': [],
+    'Konum Kayıtlarım': [],
 }
 
 const formatRecordDate = (value) => {
@@ -65,7 +55,7 @@ const buildAddedAnimalRecords = (pets = []) => {
 }
 
 const getRecordsForSection = (sectionTitle, pets = []) => {
-    if (sectionTitle === 'Eklediğim Hayvanlar') {
+    if (sectionTitle === 'Eklediğim Hayvanlar' || sectionTitle === 'Favori Hayvanlarım') {
         return buildAddedAnimalRecords(pets)
     }
 
@@ -110,6 +100,16 @@ export default function ProfilePage() {
     const [profileImageUri, setProfileImageUri] = useState(null)
     const [addedPets, setAddedPets] = useState([])
     const [favoritePets, setFavoritePets] = useState([])
+    const [aggregatedRecords, setAggregatedRecords] = useState({ feeds: [], treatments: [], locations: [] })
+
+    const getCurrentUserIdentifiers = () => {
+        const user = auth.currentUser
+        const uid = user && user.uid
+        const displayName = user && user.displayName
+        const emailPrefix = user && user.email ? user.email.split('@')[0] : null
+        const username = registrationInfo && registrationInfo.username ? registrationInfo.username : null
+        return { uid, displayName, emailPrefix, username }
+    }
 
     const [deletePassword, setDeletePassword] = useState('')
     const [deleteError, setDeleteError] = useState('')
@@ -117,8 +117,89 @@ export default function ProfilePage() {
 
     const openRecordsModal = (sectionTitle) => {
         setSelectedSectionTitle(sectionTitle)
-        setSelectedSectionRecords(getRecordsForSection(sectionTitle, addedPets))
         setIsRecordsModalVisible(true)
+            // load records dynamically depending on section
+            ; (async () => {
+                try {
+                    if (sectionTitle === 'Eklediğim Hayvanlar') {
+                        setSelectedSectionRecords(getRecordsForSection(sectionTitle, addedPets))
+                    } else if (sectionTitle === 'Favori Hayvanlarım') {
+                        // fetch fresh favorites to reflect recent heart toggles
+                        try {
+                            const user = auth.currentUser
+                            if (user) {
+                                const freshFavorites = await getUserFavoritePets(user.uid)
+                                setFavoritePets(freshFavorites || [])
+                                setSelectedSectionRecords(getRecordsForSection(sectionTitle, freshFavorites || []))
+                            } else {
+                                setSelectedSectionRecords(getRecordsForSection(sectionTitle, favoritePets))
+                            }
+                        } catch (favErr) {
+                            setSelectedSectionRecords(getRecordsForSection(sectionTitle, favoritePets))
+                        }
+                    } else if (sectionTitle === 'Besleme Kayıtlarım') {
+                        const items = []
+                        const ids = getCurrentUserIdentifiers()
+                        await Promise.all(addedPets.map(async (pet) => {
+                            try {
+                                let recs = await getPetRecords(pet.id, 'feeds')
+                                if (Array.isArray(recs) && ids.uid) {
+                                    recs = recs.filter((r) => r.addedByUid === ids.uid || r.addedBy === ids.uid || r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                } else if (Array.isArray(recs)) {
+                                    // try matching by username/displayName/email prefix if available
+                                    recs = recs.filter((r) => r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                }
+                                recs.forEach((r) => items.push({ title: pet.name || 'Hayvan', subtitle: `${r.food || 'Besleme'}${r.note ? ' • ' + r.note : ''}`, date: r.date || r.createdAt || '', pet }))
+                            } catch (e) { }
+                        }))
+                        setSelectedSectionRecords(items.sort((a, b) => (new Date(b.date || 0)).getTime() - (new Date(a.date || 0)).getTime()))
+                    } else if (sectionTitle === 'Tedavi Kayıtlarım') {
+                        const items = []
+                        const ids = getCurrentUserIdentifiers()
+                        await Promise.all(addedPets.map(async (pet) => {
+                            try {
+                                let recs = await getPetRecords(pet.id, 'treatments')
+                                if (Array.isArray(recs) && ids.uid) {
+                                    recs = recs.filter((r) => r.addedByUid === ids.uid || r.addedBy === ids.uid || r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                } else if (Array.isArray(recs)) {
+                                    recs = recs.filter((r) => r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                }
+                                recs.forEach((r) => items.push({ title: pet.name || 'Hayvan', subtitle: `${r.treatmentType || 'Tedavi'}${r.note ? ' • ' + r.note : ''}${r.vetName ? ' • ' + r.vetName : ''}`, date: r.date || r.createdAt || '', pet }))
+                            } catch (e) { }
+                        }))
+                        setSelectedSectionRecords(items.sort((a, b) => (new Date(b.date || 0)).getTime() - (new Date(a.date || 0)).getTime()))
+                    } else if (sectionTitle === 'Konum Kayıtlarım') {
+                        const items = []
+                        const ids = getCurrentUserIdentifiers()
+                        await Promise.all(addedPets.map(async (pet) => {
+                            try {
+                                let recs = await getPetRecords(pet.id, 'locations')
+                                if (Array.isArray(recs) && ids.uid) {
+                                    recs = recs.filter((r) => r.addedByUid === ids.uid || r.addedBy === ids.uid || r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                } else if (Array.isArray(recs)) {
+                                    recs = recs.filter((r) => r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                }
+                                recs.forEach((r) => {
+                                    const displayDate = formatRecordDate(r.date || r.createdAt)
+                                    let subtitle = [r.city, r.district, r.neighborhood].filter(Boolean).join(' • ')
+                                    if (!subtitle) {
+                                        if (r.currentLocation) subtitle = r.currentLocation
+                                        else if (r.latitude !== undefined && r.longitude !== undefined) subtitle = `Koordinat: ${Number(r.latitude).toFixed(5)}, ${Number(r.longitude).toFixed(5)}`
+                                        else subtitle = 'Bilgi yok'
+                                    }
+                                    const dateStr = `${displayDate}${r.time ? ' ' + r.time : ''}`
+                                    items.push({ animal: pet.name || 'Hayvan', location: subtitle, updatedAt: dateStr, pet })
+                                })
+                            } catch (e) { }
+                        }))
+                        setSelectedSectionRecords(items.sort((a, b) => (new Date(b.date || 0)).getTime() - (new Date(a.date || 0)).getTime()))
+                    } else {
+                        setSelectedSectionRecords(getRecordsForSection(sectionTitle, addedPets))
+                    }
+                } catch (err) {
+                    setSelectedSectionRecords(getRecordsForSection(sectionTitle, addedPets))
+                }
+            })()
         recordsDrawerTranslateX.setValue(420)
         Animated.timing(recordsDrawerTranslateX, {
             toValue: 0,
@@ -387,6 +468,52 @@ export default function ProfilePage() {
         setSelectedSectionRecords(getRecordsForSection(selectedSectionTitle, addedPets))
     }, [addedPets, isRecordsModalVisible, selectedSectionTitle])
 
+    // aggregate records counts for UI badges
+    useEffect(() => {
+        let active = true
+            ; (async () => {
+                try {
+                    const feedArr = []
+                    const treatmentArr = []
+                    const locationArr = []
+
+                    const ids = getCurrentUserIdentifiers()
+                    await Promise.all((addedPets || []).map(async (pet) => {
+                        try {
+                            let f = await getPetRecords(pet.id, 'feeds')
+                            let t = await getPetRecords(pet.id, 'treatments')
+                            let l = await getPetRecords(pet.id, 'locations')
+                            if (Array.isArray(f)) {
+                                if (ids.uid) f = f.filter(r => r.addedByUid === ids.uid || r.addedBy === ids.uid || r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                else f = f.filter(r => r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                            }
+                            if (Array.isArray(t)) {
+                                if (ids.uid) t = t.filter(r => r.addedByUid === ids.uid || r.addedBy === ids.uid || r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                else t = t.filter(r => r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                            }
+                            if (Array.isArray(l)) {
+                                if (ids.uid) l = l.filter(r => r.addedByUid === ids.uid || r.addedBy === ids.uid || r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                                else l = l.filter(r => r.addedBy === ids.username || r.addedBy === ids.displayName || r.addedBy === ids.emailPrefix)
+                            }
+                            if (Array.isArray(f)) feedArr.push(...f.map(r => ({ ...r, pet })))
+                            if (Array.isArray(t)) treatmentArr.push(...t.map(r => ({ ...r, pet })))
+                            if (Array.isArray(l)) locationArr.push(...l.map(r => ({ ...r, pet })))
+                        } catch (e) {
+                            // ignore per-pet failures
+                        }
+                    }))
+
+                    if (active) {
+                        setAggregatedRecords({ feeds: feedArr, treatments: treatmentArr, locations: locationArr })
+                    }
+                } catch (err) {
+                    // ignore
+                }
+            })()
+
+        return () => { active = false }
+    }, [addedPets])
+
     const handlePickProfileImage = async () => {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync()
 
@@ -630,7 +757,13 @@ export default function ProfilePage() {
                                         ? addedPets.length
                                         : item.title === 'Favori Hayvanlarım'
                                             ? favoritePets.length
-                                            : (profileRecordsBySection[item.title] || []).length}
+                                            : item.title === 'Besleme Kayıtlarım'
+                                                ? (aggregatedRecords.feeds || []).length
+                                                : item.title === 'Tedavi Kayıtlarım'
+                                                    ? (aggregatedRecords.treatments || []).length
+                                                    : item.title === 'Konum Kayıtlarım'
+                                                        ? (aggregatedRecords.locations || []).length
+                                                        : 0}
                                 </Text>
                                 <TouchableOpacity style={styles.rowArrowButton} onPress={() => openRecordsModal(item.title)}>
                                     <Ionicons
@@ -859,7 +992,7 @@ export default function ProfilePage() {
                                                 <Pressable
                                                     onPress={() => {
                                                         closeRecordsModal()
-                                                        navigation.navigate('AnimalDetail')
+                                                        navigation.navigate('AnimalDetail', record.pet ? { pet: record.pet } : undefined)
                                                     }}
                                                 >
                                                     <Text style={[styles.recordCardTitle, styles.recordCardLink]}>{record.animal}</Text>
