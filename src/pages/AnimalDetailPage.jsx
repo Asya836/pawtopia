@@ -1,7 +1,6 @@
 import { StyleSheet, Text, View, ScrollView, Pressable, Image, Modal, TextInput, Alert, ActivityIndicator, Animated } from 'react-native'
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigation } from '@react-navigation/native'
-import { useRoute } from '@react-navigation/native'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native'
 import { Ionicons } from '@expo/vector-icons'
 import { getColor } from '../css/theme'
 import * as Location from 'expo-location'
@@ -1027,8 +1026,17 @@ export default function AnimalDetailPage() {
         )
     }
 
+    const scrollRef = useRef(null)
+
+    useFocusEffect(
+        useCallback(() => {
+            // scroll to top whenever the screen receives focus
+            try { scrollRef.current && scrollRef.current.scrollTo({ y: 0, animated: false }) } catch (e) { }
+        }, [])
+    )
+
     return (
-        <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent}>
+        <ScrollView ref={scrollRef} style={styles.screen} contentContainerStyle={styles.screenContent}>
             <View style={styles.headerShell}>
                 <View style={styles.headerAccent} />
                 <View style={styles.header}>

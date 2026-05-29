@@ -1,8 +1,8 @@
 import { StyleSheet, Text, View, ScrollView, Image, Dimensions, Pressable, TextInput, Alert, ActivityIndicator } from 'react-native'
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { getColor } from '../css/theme'
 import { Ionicons } from '@expo/vector-icons'
-import { useNavigation } from '@react-navigation/native'
+import { useNavigation, useFocusEffect } from '@react-navigation/native'
 import * as ImagePicker from 'expo-image-picker'
 import * as Location from 'expo-location'
 import { auth } from '../firebase/config'
@@ -166,6 +166,13 @@ const DOG_BREED_OPTIONS = [
 
 export default function AddAnimalPage() {
     const navigation = useNavigation()
+    const scrollRef = useRef(null)
+
+    useFocusEffect(
+        useCallback(() => {
+            try { scrollRef.current && scrollRef.current.scrollTo && scrollRef.current.scrollTo({ y: 0, animated: false }) } catch (e) { }
+        }, [])
+    )
     const [selectedImageUri, setSelectedImageUri] = useState(null)
     const [selectedImageBase64, setSelectedImageBase64] = useState('')
     const [animalName, setAnimalName] = useState('')
@@ -523,7 +530,7 @@ export default function AddAnimalPage() {
     }
 
     return (
-        <ScrollView>
+        <ScrollView ref={scrollRef}>
             <View style={styles.header}>
                 <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
                     <Ionicons name="chevron-back" size={24} color="black" />

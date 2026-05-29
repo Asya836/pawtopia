@@ -65,6 +65,13 @@ const getRecordsForSection = (sectionTitle, pets = []) => {
 export default function ProfilePage() {
     const navigation = useNavigation()
     const recordsDrawerTranslateX = useRef(new Animated.Value(420)).current
+    const mainScrollRef = useRef(null)
+
+    useFocusEffect(
+        useCallback(() => {
+            try { mainScrollRef.current && mainScrollRef.current.scrollTo && mainScrollRef.current.scrollTo({ y: 0, animated: false }) } catch (e) { }
+        }, [])
+    )
 
     const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false)
     const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false)
@@ -710,7 +717,7 @@ export default function ProfilePage() {
 
     return (
         <>
-            <ScrollView contentContainerStyle={styles.container}>
+            <ScrollView ref={mainScrollRef} contentContainerStyle={styles.container}>
                 <View>
                     <Image
                         source={require('../images/profile-background.png')}

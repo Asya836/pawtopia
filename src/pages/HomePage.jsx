@@ -9,6 +9,9 @@ import { getColor } from '../css/theme'
 import { getPets } from '../firebase/helpers'
 import { db } from '../firebase/config'
 import { collection as fsCollection, collectionGroup as fsCollectionGroup, onSnapshot as fsOnSnapshot } from 'firebase/firestore'
+import { query as fsQuery, orderBy as fsOrderBy, limit as fsLimit } from 'firebase/firestore'
+
+import { useRef } from 'react'
 
 const DEFAULT_DAILY_INFO = 'Uygulamamızda her gün yeni bir hayvan bilgisi paylaşarak, sokak hayvanları hakkında daha fazla bilgi edinmeni sağlıyoruz.'
 
@@ -69,6 +72,9 @@ export default function HomePage() {
     const [currentLocation, setCurrentLocation] = useState(null)
     const [currentLocationLabel, setCurrentLocationLabel] = useState('Konum alınıyor...')
     const [isNearbyLoading, setIsNearbyLoading] = useState(true)
+    const [latestLocations, setLatestLocations] = useState({})
+    const locationUnsubsRef = useRef({})
+    const scrollRef = useRef(null)
 
     // pets are loaded via realtime subscription below
 
@@ -112,6 +118,7 @@ export default function HomePage() {
             let active = true
 
             const run = async () => {
+                try { scrollRef.current && scrollRef.current.scrollTo && scrollRef.current.scrollTo({ y: 0, animated: false }) } catch (e) { }
                 setIsNearbyLoading(true)
                 await loadCurrentLocation()
                 if (active) setIsNearbyLoading(false)
@@ -149,6 +156,71 @@ export default function HomePage() {
         }
     }, [])
 
+
+    // subscribe to each pet's latest location document and store it in `latestLocations`
+    useEffect(() => {
+        const currentUnsubs = locationUnsubsRef.current || {}
+
+        // add subscriptions for new pets
+        pets.forEach((pet) => {
+            if (!pet || !pet.id) return
+            if (currentUnsubs[pet.id]) return // already subscribed
+
+            try {
+                const locCol = fsCollection(db, 'pets', pet.id, 'locations')
+                const q = fsQuery(locCol, fsOrderBy('createdAt', 'desc'), fsLimit(1))
+                const unsubLoc = fsOnSnapshot(q, (snap) => {
+                    try {
+                        const doc = snap.docs[0]
+                        if (doc && doc.exists()) {
+                            const data = { id: doc.id, ...doc.data() }
+                            setLatestLocations((prev) => ({ ...prev, [pet.id]: data }))
+                        } else {
+                            setLatestLocations((prev) => {
+                                const next = { ...prev }
+                                delete next[pet.id]
+                                return next
+                            })
+                        }
+                    } catch (err) {
+                        console.error('locations snapshot processing error for pet', pet.id, err)
+                    }
+                }, (err) => {
+                    console.error('locations snapshot error for pet', pet.id, err)
+                })
+
+                currentUnsubs[pet.id] = unsubLoc
+            } catch (err) {
+                console.error('failed to subscribe to pet locations for', pet.id, err)
+            }
+        })
+
+        // remove subscriptions for pets that no longer exist
+        Object.keys(currentUnsubs).forEach((petId) => {
+            if (!pets.find((p) => p.id === petId)) {
+                try {
+                    currentUnsubs[petId] && currentUnsubs[petId]()
+                } catch (e) { }
+                delete currentUnsubs[petId]
+                setLatestLocations((prev) => {
+                    const next = { ...prev }
+                    delete next[petId]
+                    return next
+                })
+            }
+        })
+
+        locationUnsubsRef.current = currentUnsubs
+
+        return () => {
+            // cleanup all
+            try {
+                Object.values(locationUnsubsRef.current || {}).forEach((u) => { try { u && u() } catch (e) { } })
+            } catch (e) { }
+            locationUnsubsRef.current = {}
+        }
+    }, [pets])
+
     const nearbyPets = useMemo(() => {
         const userLocation = currentLocation
 
@@ -160,15 +232,20 @@ export default function HomePage() {
 
         return pets
             .map((pet) => {
-                const petCoords = Number.isFinite(Number(pet?.latitude)) && Number.isFinite(Number(pet?.longitude))
-                    ? { latitude: Number(pet.latitude), longitude: Number(pet.longitude) }
-                    : null
+                // prefer latest location document if available
+                const latest = latestLocations[pet.id]
+                const petCoords = latest && Number.isFinite(Number(latest.latitude)) && Number.isFinite(Number(latest.longitude))
+                    ? { latitude: Number(latest.latitude), longitude: Number(latest.longitude) }
+                    : Number.isFinite(Number(pet?.latitude)) && Number.isFinite(Number(pet?.longitude))
+                        ? { latitude: Number(pet.latitude), longitude: Number(pet.longitude) }
+                        : null
+
                 const distanceKm = userLocation && petCoords ? getDistanceKm(userLocation, petCoords) : null
 
                 return {
                     ...pet,
                     distanceKm,
-                    locationLabel: getPetLocationLabel(pet),
+                    locationLabel: (latest && [latest.city, latest.district, latest.neighborhood].filter(Boolean).join(' / ')) || getPetLocationLabel(pet),
                 }
             })
             .filter((pet) => pet.distanceKm !== null && pet.distanceKm <= MAX_DISTANCE_KM)
@@ -275,7 +352,7 @@ export default function HomePage() {
     }, [])
 
     return (
-        <ScrollView showsHorizontalScrollIndicator={false}>
+        <ScrollView ref={scrollRef} showsHorizontalScrollIndicator={false}>
             <View style={styles.topContainer}>
                 <Image source={require('../../assets/logo2.png')} style={styles.logoImage} resizeMode='contain' />
             </View>

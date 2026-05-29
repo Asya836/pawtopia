@@ -66,6 +66,12 @@ const buildRegionFromCoordinates = (coordinates = [], fallbackRegion = DEFAULT_R
 
 const PetMarker = React.memo(function PetMarker({ pet, onPress, styles, Ionicons }) {
     const locationLabel = pet.locationLabel || [pet.city, pet.district, pet.neighborhood].filter(Boolean).join(' / ')
+    const [tracksViewChanges, setTracksViewChanges] = useState(Boolean(pet?.imageUrl))
+
+    useEffect(() => {
+        // when image URL changes, allow marker to update until image loads
+        setTracksViewChanges(Boolean(pet?.imageUrl))
+    }, [pet?.imageUrl])
 
     return (
         <Marker
@@ -73,12 +79,19 @@ const PetMarker = React.memo(function PetMarker({ pet, onPress, styles, Ionicons
             coordinate={pet.coordinate}
             anchor={{ x: 0.5, y: 1 }}
             onPress={() => onPress && onPress(pet)}
+            tracksViewChanges={tracksViewChanges}
         >
             <View style={styles.petMarkerContainer}>
                 <View style={styles.petMarkerShadow}>
                     <View style={styles.petMarkerCircle}>
                         {pet.imageUrl ? (
-                            <Image source={{ uri: pet.imageUrl }} style={styles.petMarkerImage} resizeMode='cover' />
+                            <Image
+                                source={{ uri: pet.imageUrl }}
+                                style={styles.petMarkerImage}
+                                resizeMode='cover'
+                                onLoad={() => setTracksViewChanges(false)}
+                                onError={() => setTracksViewChanges(false)}
+                            />
                         ) : (
                             <Ionicons name='paw' size={18} color='#fff' />
                         )}
@@ -183,7 +196,7 @@ export default function MapPage() {
             setCurrentLocation(initialCoords);
             return initialCoords;
         } catch (error) {
-            setLocationError('Konum alınırken bir hata oluştu.');
+            setLocationError('Konum alınırken bir hata oluştu. ' + (error?.message || ''));
             return null;
         } finally {
             setIsLoading(false);
@@ -238,7 +251,7 @@ export default function MapPage() {
                 );
             } catch (error) {
                 if (isMounted) {
-                    setLocationError('Konum alınırken bir hata oluştu.');
+                    setLocationError('Konum alınırken bir hata oluştu. ' + (error?.message || ''));
                 }
             } finally {
                 if (isMounted) {
@@ -361,7 +374,9 @@ export default function MapPage() {
             DEFAULT_REGION
         )
 
-        mapRef.current?.animateToRegion(nextRegion, 200)
+        // choose a zoom level based on region span (simple heuristic)
+        const zoomForRegion = nextRegion.latitudeDelta <= 0.02 ? 16 : nextRegion.latitudeDelta <= 0.05 ? 14 : 12
+        animateToCoordinates({ latitude: nextRegion.latitude, longitude: nextRegion.longitude }, zoomForRegion)
         hasCenteredMapRef.current = true
     }, [currentLocation, isMapReady, pets])
 
@@ -371,12 +386,7 @@ export default function MapPage() {
         const focusPetId = route?.params?.focusPetId
 
         if (focusCoords && mapRef.current) {
-            mapRef.current.animateToRegion({
-                latitude: focusCoords.latitude,
-                longitude: focusCoords.longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-            }, 200)
+            setTimeout(() => animateToCoordinates({ latitude: focusCoords.latitude, longitude: focusCoords.longitude }, 16), 200)
             return
         }
 
@@ -384,12 +394,7 @@ export default function MapPage() {
             // prefer the latest location document (if subscribed)
             const latest = latestLocations[focusPetId]
             if (latest && Number.isFinite(Number(latest.latitude)) && Number.isFinite(Number(latest.longitude))) {
-                mapRef.current.animateToRegion({
-                    latitude: Number(latest.latitude),
-                    longitude: Number(latest.longitude),
-                    latitudeDelta: 0.01,
-                    longitudeDelta: 0.01,
-                }, 200)
+                setTimeout(() => animateToCoordinates({ latitude: Number(latest.latitude), longitude: Number(latest.longitude) }, 16), 200)
                 return
             }
 
@@ -397,12 +402,7 @@ export default function MapPage() {
             const pet = pets.find((p) => p.id === focusPetId)
             const petCoord = pet ? toMarkerCoordinate(pet) : null
             if (petCoord) {
-                mapRef.current.animateToRegion({
-                    latitude: petCoord.latitude,
-                    longitude: petCoord.longitude,
-                    latitudeDelta: 0.01,
-                    longitudeDelta: 0.01,
-                }, 200)
+                setTimeout(() => animateToCoordinates({ latitude: petCoord.latitude, longitude: petCoord.longitude }, 16), 200)
                 return
             }
         }
@@ -467,15 +467,7 @@ export default function MapPage() {
         }
 
         try {
-            mapRef.current?.animateToRegion(
-                {
-                    latitude: coords.latitude,
-                    longitude: coords.longitude,
-                    latitudeDelta: 0.03,
-                    longitudeDelta: 0.03,
-                },
-                200
-            )
+            animateToCoordinates({ latitude: coords.latitude, longitude: coords.longitude }, 14)
         } catch (err) {
             console.warn('recenter animate error', err)
         }
@@ -487,16 +479,32 @@ export default function MapPage() {
 
         const coords = await loadCurrentLocation()
         if (coords) {
-            mapRef.current?.animateToRegion(
-                {
-                    latitude: coords.latitude,
-                    longitude: coords.longitude,
-                    latitudeDelta: 0.03,
-                    longitudeDelta: 0.03,
-                },
-                200
-            )
+            animateToCoordinates({ latitude: coords.latitude, longitude: coords.longitude }, 14)
             hasCenteredMapRef.current = true
+        }
+    }
+
+    const animateToCoordinates = (coords, zoom) => {
+        if (!mapRef.current || !coords) return
+        try {
+            // compute a latitudeDelta from a zoom-like parameter for cross-platform behavior
+            const zoomLevel = typeof zoom === 'number' ? zoom : 14
+            const delta = zoomLevel >= 16 ? 0.01 : zoomLevel >= 14 ? 0.03 : 0.08
+
+            // prefer animateToRegion which reliably changes visible span across providers
+            if (typeof mapRef.current.animateToRegion === 'function') {
+                mapRef.current.animateToRegion({ latitude: coords.latitude, longitude: coords.longitude, latitudeDelta: delta, longitudeDelta: delta }, 350)
+            } else if (typeof mapRef.current.animateCamera === 'function') {
+                const camera = {
+                    center: { latitude: coords.latitude, longitude: coords.longitude },
+                    zoom: zoomLevel,
+                    heading: 0,
+                    pitch: 0,
+                }
+                mapRef.current.animateCamera(camera, { duration: 350 })
+            }
+        } catch (err) {
+            console.warn('animateToCoordinates error', err)
         }
     }
 
@@ -510,6 +518,11 @@ export default function MapPage() {
                 showsUserLocation={false}
                 showsMyLocationButton={false}
                 showsCompass={false}
+                zoomEnabled={true}
+                scrollEnabled={true}
+                pitchEnabled={true}
+                rotateEnabled={true}
+                zoomControlEnabled={true}
             >
                 {petMarkers.map((pet) => (
                     <PetMarker
@@ -522,7 +535,7 @@ export default function MapPage() {
                 ))}
 
                 {currentLocation && (
-                    <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }}>
+                    <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
                         <View style={styles.currentLocationMarkerOuter}>
                             <View style={styles.currentLocationMarkerInner} />
                         </View>

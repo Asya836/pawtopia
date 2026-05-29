@@ -1,5 +1,5 @@
 import { ActivityIndicator, ImageBackground, StyleSheet, Text, View, Pressable, Image, TextInput, Modal, ScrollView } from 'react-native'
-import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { getColor } from '../css/theme';
@@ -167,6 +167,13 @@ const SPECIES_OPTIONS = [
 
 export default function AnimalListPage() {
     const navigation = useNavigation();
+    const scrollRef = useRef(null)
+
+    useFocusEffect(
+        useCallback(() => {
+            try { scrollRef.current && scrollRef.current.scrollTo && scrollRef.current.scrollTo({ y: 0, animated: false }) } catch (e) { }
+        }, [])
+    )
     const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
     const [isLocationDrawerVisible, setIsLocationDrawerVisible] = useState(false);
     const [locationDrawerType, setLocationDrawerType] = useState('city');
@@ -664,6 +671,7 @@ export default function AnimalListPage() {
                 </View>
             </ImageBackground>
             <ScrollView
+                ref={scrollRef}
                 showsHorizontalScrollIndicator={false}
                 style={{ marginTop: 20, marginBottom: 200 }}
                 contentContainerStyle={{ paddingBottom: listBottomPadding }}
