@@ -7,7 +7,7 @@ import * as Location from 'expo-location'
 import * as ImagePicker from 'expo-image-picker'
 import { auth, db } from '../firebase/config'
 import { deletePet, getUserFavoritePetIds, getUserProfile, togglePetFavorite, updatePet, uploadImageFromUri, addFeedRecord, addTreatmentRecord, addLocationRecord } from '../firebase/helpers'
-import { collection as fsCollection, query as fsQuery, orderBy as fsOrderBy, onSnapshot } from 'firebase/firestore'
+import { collection as fsCollection, query as fsQuery, orderBy as fsOrderBy, onSnapshot, doc as fsDoc } from 'firebase/firestore'
 import { formatEstimatedPetAge } from '../utils/petAge'
 
 const CITY_URL = 'https://raw.githubusercontent.com/metinyildirimnet/turkiye-adresler-json/master/sehirler.json'
@@ -159,6 +159,8 @@ export default function AnimalDetailPage() {
     const route = useRoute()
     const hasPetData = Boolean(route.params?.pet)
     const [isFavorite, setIsFavorite] = useState(false)
+    const [favFlashVisible, setFavFlashVisible] = useState(false)
+    const [favFlashText, setFavFlashText] = useState('')
     const [isEditModalVisible, setIsEditModalVisible] = useState(false)
     const [isFeedModalVisible, setIsFeedModalVisible] = useState(false)
     const [isTreatmentModalVisible, setIsTreatmentModalVisible] = useState(false)
@@ -409,22 +411,24 @@ export default function AnimalDetailPage() {
         || !animalData.ownerId || auth.currentUser?.uid === animalData.ownerId
 
     useEffect(() => {
-        const loadFavoriteState = async () => {
-            const user = auth.currentUser
-            if (!user || !animalData.id) {
-                setIsFavorite(false)
-                return
-            }
-
-            try {
-                const favoritePetIds = await getUserFavoritePetIds(user.uid)
-                setIsFavorite(favoritePetIds.includes(animalData.id))
-            } catch (error) {
-                setIsFavorite(false)
-            }
+        const user = auth.currentUser
+        if (!user || !animalData.id) {
+            setIsFavorite(false)
+            return
         }
 
-        loadFavoriteState()
+        const userRef = fsDoc(db, 'users', user.uid)
+        const unsub = onSnapshot(userRef, (snap) => {
+            const profile = snap.exists() ? snap.data() : null
+            const favoritePetIds = Array.isArray(profile?.favoritePetIds) ? profile.favoritePetIds.filter(Boolean) : []
+            setIsFavorite(favoritePetIds.includes(animalData.id))
+        }, (err) => {
+            setIsFavorite(false)
+        })
+
+        return () => {
+            try { unsub && unsub() } catch (e) { }
+        }
     }, [animalData.id])
 
     useEffect(() => {
@@ -965,6 +969,13 @@ export default function AnimalDetailPage() {
         try {
             const nextFavoriteState = await togglePetFavorite(user.uid, animalData.id)
             setIsFavorite(nextFavoriteState)
+            // show a small green flash similar to HomePage auth flash
+            try {
+                const text = nextFavoriteState ? 'Favorilere eklendi' : 'Favorilerden çıkarıldı'
+                setFavFlashText(text)
+                setFavFlashVisible(true)
+                setTimeout(() => setFavFlashVisible(false), 1200)
+            } catch (e) { }
         } catch (error) {
             Alert.alert('Hata', error.message || 'Favori durumu güncellenemedi.')
         }
@@ -1058,6 +1069,12 @@ export default function AnimalDetailPage() {
                     </View>
                 </View>
             </View>
+
+            {favFlashVisible ? (
+                <View style={styles.favFlashBox} pointerEvents='none'>
+                    <Text style={styles.favFlashText}>{favFlashText}</Text>
+                </View>
+            ) : null}
 
             <View style={styles.heroCard}>
                 <View style={styles.heroImageWrap}>
@@ -2429,5 +2446,20 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: '800',
+    },
+    favFlashBox: {
+        position: 'absolute',
+        top: 60,
+        alignSelf: 'center',
+        backgroundColor: 'rgba(34,197,94,0.95)',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 20,
+        zIndex: 50,
+        elevation: 10,
+    },
+    favFlashText: {
+        color: 'white',
+        fontWeight: '700',
     },
 })
