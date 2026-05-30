@@ -227,8 +227,8 @@ export default function HomePage() {
         // If we don't have the user's current location, don't show nearby animals
         if (!userLocation) return []
 
-        // Only include pets within 5 km of the user's current position
-        const MAX_DISTANCE_KM = 5
+        // Only include pets within 1 km of the user's current position
+        const MAX_DISTANCE_KM = 1
 
         return pets
             .map((pet) => {

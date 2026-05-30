@@ -385,8 +385,14 @@ export default function MapPage() {
         const focusCoords = route?.params?.focusCoords
         const focusPetId = route?.params?.focusPetId
 
+        // helper to perform a faster / tighter zoom when user explicitly focuses
+        const focusTo = (coords) => {
+            // prefer a tighter zoom when jumping to a specific pet/location
+            setTimeout(() => animateToCoordinates({ latitude: coords.latitude, longitude: coords.longitude }, 18, 150), 120)
+        }
+
         if (focusCoords && mapRef.current) {
-            setTimeout(() => animateToCoordinates({ latitude: focusCoords.latitude, longitude: focusCoords.longitude }, 16), 200)
+            focusTo(focusCoords)
             return
         }
 
@@ -394,7 +400,7 @@ export default function MapPage() {
             // prefer the latest location document (if subscribed)
             const latest = latestLocations[focusPetId]
             if (latest && Number.isFinite(Number(latest.latitude)) && Number.isFinite(Number(latest.longitude))) {
-                setTimeout(() => animateToCoordinates({ latitude: Number(latest.latitude), longitude: Number(latest.longitude) }, 16), 200)
+                focusTo({ latitude: Number(latest.latitude), longitude: Number(latest.longitude) })
                 return
             }
 
@@ -402,7 +408,7 @@ export default function MapPage() {
             const pet = pets.find((p) => p.id === focusPetId)
             const petCoord = pet ? toMarkerCoordinate(pet) : null
             if (petCoord) {
-                setTimeout(() => animateToCoordinates({ latitude: petCoord.latitude, longitude: petCoord.longitude }, 16), 200)
+                focusTo(petCoord)
                 return
             }
         }
@@ -484,16 +490,16 @@ export default function MapPage() {
         }
     }
 
-    const animateToCoordinates = (coords, zoom) => {
+    const animateToCoordinates = (coords, zoom, durationMs = 350) => {
         if (!mapRef.current || !coords) return
         try {
             // compute a latitudeDelta from a zoom-like parameter for cross-platform behavior
             const zoomLevel = typeof zoom === 'number' ? zoom : 14
-            const delta = zoomLevel >= 16 ? 0.01 : zoomLevel >= 14 ? 0.03 : 0.08
+            const delta = zoomLevel >= 17 ? 0.005 : zoomLevel >= 16 ? 0.01 : zoomLevel >= 14 ? 0.03 : 0.08
 
             // prefer animateToRegion which reliably changes visible span across providers
             if (typeof mapRef.current.animateToRegion === 'function') {
-                mapRef.current.animateToRegion({ latitude: coords.latitude, longitude: coords.longitude, latitudeDelta: delta, longitudeDelta: delta }, 350)
+                mapRef.current.animateToRegion({ latitude: coords.latitude, longitude: coords.longitude, latitudeDelta: delta, longitudeDelta: delta }, durationMs)
             } else if (typeof mapRef.current.animateCamera === 'function') {
                 const camera = {
                     center: { latitude: coords.latitude, longitude: coords.longitude },
@@ -501,7 +507,7 @@ export default function MapPage() {
                     heading: 0,
                     pitch: 0,
                 }
-                mapRef.current.animateCamera(camera, { duration: 350 })
+                mapRef.current.animateCamera(camera, { duration: durationMs })
             }
         } catch (err) {
             console.warn('animateToCoordinates error', err)
@@ -515,7 +521,7 @@ export default function MapPage() {
                 style={styles.map}
                 initialRegion={initialRegion}
                 onMapReady={handleMapReady}
-                showsUserLocation={false}
+                showsUserLocation={true}
                 showsMyLocationButton={false}
                 showsCompass={false}
                 zoomEnabled={true}
@@ -534,13 +540,7 @@ export default function MapPage() {
                     />
                 ))}
 
-                {currentLocation && (
-                    <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
-                        <View style={styles.currentLocationMarkerOuter}>
-                            <View style={styles.currentLocationMarkerInner} />
-                        </View>
-                    </Marker>
-                )}
+                {/* Native user location dot is shown via `showsUserLocation` */}
             </MapView>
 
             <Pressable style={styles.backButton} onPress={() => navigation.navigate('AnimalList')}>
