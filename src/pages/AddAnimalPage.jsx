@@ -446,6 +446,22 @@ export default function AddAnimalPage() {
         return Object.keys(nextErrors).length === 0
     }
 
+    const isAddAnimalFormFilled = useMemo(() => {
+        return !!(
+            selectedImageUri &&
+            animalName && animalName.trim() &&
+            animalType && animalType.trim() &&
+            animalBreed && animalBreed.trim() &&
+            animalColor && animalColor.trim() &&
+            animalAge && animalAge.trim() &&
+            selectedGender && selectedGender.trim() &&
+            selectedCity && selectedCity.trim() &&
+            selectedDistrict && selectedDistrict.trim() &&
+            selectedNeighborhood && selectedNeighborhood.trim() &&
+            latitude !== null && longitude !== null
+        )
+    }, [selectedImageUri, animalName, animalType, animalBreed, animalColor, animalAge, selectedGender, selectedCity, selectedDistrict, selectedNeighborhood, latitude, longitude])
+
     const resetForm = () => {
         setSelectedImageUri(null)
         setSelectedImageBase64('')
@@ -821,9 +837,10 @@ export default function AddAnimalPage() {
                     onChangeText={setAnimalDescription}
                 />
 
-                <Pressable style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} onPress={handleSave} disabled={isSaving}>
+                <Pressable style={[styles.saveButton, isAddAnimalFormFilled && styles.saveButtonReady, isSaving && styles.saveButtonDisabled]} onPress={handleSave} disabled={isSaving}>
                     <Text style={styles.saveButtonText}>{isSaving ? 'Kaydediliyor...' : 'Kaydet'}</Text>
                 </Pressable>
+
             </View>
         </ScrollView>
     )
@@ -968,6 +985,19 @@ const styles = StyleSheet.create({
     },
     saveButtonDisabled: {
         opacity: 0.7,
+    },
+    saveButtonReady: {
+        marginTop: 30,
+        backgroundColor: getColor('--light-six-dark'),
+        paddingVertical: 14,
+        borderRadius: 50,
+        alignItems: 'center',
+        marginBottom: 100,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        elevation: 3,
     },
     saveButtonText: {
         color: '#fff',

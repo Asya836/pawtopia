@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { View, Text, TextInput, StyleSheet, ImageBackground, Pressable, ScrollView, Modal, Platform } from "react-native";
 import { getColor } from "../css/theme";
 import { useNavigation } from "@react-navigation/native";
@@ -34,6 +34,21 @@ export default function AuthScreen() {
     const [cities, setCities] = useState([]);
     const [isLoadingCities, setIsLoadingCities] = useState(false);
     const navigation = useNavigation();
+
+    const isFormComplete = useMemo(() => {
+        if (isLogin) {
+            return formValues.email.trim() !== '' && formValues.password.trim() !== '';
+        }
+        return (
+            formValues.fullName.trim() !== '' &&
+            formValues.username.trim() !== '' &&
+            formValues.email.trim() !== '' &&
+            formValues.birthDate.trim() !== '' &&
+            formValues.city.trim() !== '' &&
+            formValues.password.trim() !== '' &&
+            formValues.confirmPassword.trim() !== ''
+        );
+    }, [formValues, isLogin]);
 
     useEffect(() => {
         const loadCities = async () => {
@@ -376,7 +391,7 @@ export default function AuthScreen() {
             )}
 
             <View style={styles.actionContainer}>
-                <Pressable style={styles.submitButton} onPress={handleSubmit}>
+                <Pressable style={[styles.submitButton, isFormComplete && styles.submitButtonReady]} onPress={handleSubmit}>
                     <Text style={styles.submitButtonText}>{isLogin ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
                 </Pressable>
             </View>
@@ -924,6 +939,9 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         width: '80%',
         backgroundColor: getColor('--light-six'),
+    },
+    submitButtonReady: {
+        backgroundColor: getColor('--light-six-dark'),
     },
     submitButtonText: {
         color: 'white',

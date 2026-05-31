@@ -209,6 +209,8 @@ export default function AnimalDetailPage() {
     const [locationPickerTarget, setLocationPickerTarget] = useState('feed')
     const [locationPickerType, setLocationPickerType] = useState('city')
 
+
+
     const historyDrawerTitle =
         historyDrawerType === 'feed'
             ? 'Besleme Geçmişi'
@@ -566,6 +568,40 @@ export default function AnimalDetailPage() {
         if (isFutureDateTime(locationForm.date, locationForm.time)) return 'Konum tarihi ve saati ileri bir zaman olamaz.'
         return ''
     }
+
+    const isFeedFormFilled = useMemo(() => {
+        return !!(
+            feedForm.food && feedForm.food.trim() &&
+            feedForm.date && feedForm.date.trim() &&
+            feedForm.time && feedForm.time.trim() &&
+            feedForm.city && feedForm.city.trim() &&
+            feedForm.district && feedForm.district.trim() &&
+            feedForm.neighborhood && feedForm.neighborhood.trim() &&
+            feedForm.currentLocation && feedForm.currentLocation.trim()
+        )
+    }, [feedForm])
+
+    const isTreatmentFormFilled = useMemo(() => {
+        return !!(
+            treatmentForm.treatmentType && treatmentForm.treatmentType.trim() &&
+            treatmentForm.date && treatmentForm.date.trim() &&
+            treatmentForm.time && treatmentForm.time.trim() &&
+            treatmentForm.vetName && treatmentForm.vetName.trim()
+        )
+    }, [treatmentForm])
+
+    const isLocationFormFilled = useMemo(() => {
+        return !!(
+            locationForm.city && locationForm.city.trim() &&
+            locationForm.district && locationForm.district.trim() &&
+            locationForm.neighborhood && locationForm.neighborhood.trim() &&
+            locationForm.date && locationForm.date.trim() &&
+            locationForm.time && locationForm.time.trim() &&
+            locationForm.currentLocation && locationForm.currentLocation.trim()
+        )
+    }, [locationForm])
+
+
 
     const openEditModal = () => {
         if (!isOwnPet) {
@@ -1445,7 +1481,7 @@ export default function AnimalDetailPage() {
                             <Pressable style={styles.modalCancelButton} onPress={closeFeedModal}>
                                 <Text style={styles.modalCancelButtonText}>Vazgeç</Text>
                             </Pressable>
-                            <Pressable style={styles.modalSaveButton} onPress={saveFeedRecord}>
+                            <Pressable style={[styles.modalSaveButton, isFeedFormFilled && styles.modalSaveButtonReady]} onPress={saveFeedRecord}>
                                 <Text style={styles.modalSaveButtonText}>Kaydet</Text>
                             </Pressable>
                         </View>
@@ -1514,7 +1550,7 @@ export default function AnimalDetailPage() {
                             <Pressable style={styles.modalCancelButton} onPress={closeTreatmentModal}>
                                 <Text style={styles.modalCancelButtonText}>Vazgeç</Text>
                             </Pressable>
-                            <Pressable style={styles.modalSaveButton} onPress={saveTreatmentRecord}>
+                            <Pressable style={[styles.modalSaveButton, isTreatmentFormFilled && styles.modalSaveButtonReady]} onPress={saveTreatmentRecord}>
                                 <Text style={styles.modalSaveButtonText}>Kaydet</Text>
                             </Pressable>
                         </View>
@@ -1595,7 +1631,7 @@ export default function AnimalDetailPage() {
                             <Pressable style={styles.modalCancelButton} onPress={closeLocationModal}>
                                 <Text style={styles.modalCancelButtonText}>Vazgeç</Text>
                             </Pressable>
-                            <Pressable style={styles.modalSaveButton} onPress={saveLocationRecord}>
+                            <Pressable style={[styles.modalSaveButton, isLocationFormFilled && styles.modalSaveButtonReady]} onPress={saveLocationRecord}>
                                 <Text style={styles.modalSaveButtonText}>Kaydet</Text>
                             </Pressable>
                         </View>
@@ -2192,21 +2228,7 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#222',
     },
-    modalCloseButton: {
-        width: 30,
-        height: 30,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    modalInput: {
-        borderWidth: 1,
-        borderColor: getColor('--light-six'),
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        marginBottom: 8,
-        backgroundColor: '#fff',
-    },
+
     modalInputMultiline: {
         borderWidth: 1,
         borderColor: getColor('--light-six'),
@@ -2216,6 +2238,16 @@ const styles = StyleSheet.create({
         minHeight: 90,
         marginBottom: 10,
         backgroundColor: '#fff',
+    },
+    modalInput: {
+        width: '100%',
+        borderWidth: 1,
+        borderColor: getColor('--light-six'),
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        backgroundColor: '#fff',
+        marginBottom: 8,
     },
     locationPickerButton: {
         borderWidth: 1,
@@ -2421,6 +2453,21 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: 12,
     },
+
+    modalSaveButtonReady: {
+        flex: 1,
+        borderRadius: 10,
+        backgroundColor: getColor('--light-six-dark'),
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+
     modalSaveButtonText: {
         color: '#fff',
         fontSize: 16,
