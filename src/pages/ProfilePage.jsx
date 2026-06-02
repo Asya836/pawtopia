@@ -8,7 +8,7 @@ import * as FileSystem from 'expo-file-system'
 import { useNavigation, useFocusEffect } from '@react-navigation/native'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from '../firebase/config'
-import { getUserProfile, updateUserProfile, createUserProfile, updateAuthEmail, updateAuthPassword, reauthenticateWithPassword, deleteUserAccount, getUserPets, getUserFavoritePets, getPetRecords } from '../firebase/helpers'
+import { getUserProfile, updateUserProfile, createUserProfile, updateAuthEmail, updateAuthPassword, reauthenticateWithPassword, deleteUserAccount, getUserPets, getUserFavoritePets, getPetRecords, getPets } from '../firebase/helpers'
 import { signOut as firebaseSignOut } from '../firebase/helpers'
 
 const { height: screenHeight } = Dimensions.get('window')
@@ -106,6 +106,7 @@ export default function ProfilePage() {
 
     const [profileImageUri, setProfileImageUri] = useState(null)
     const [addedPets, setAddedPets] = useState([])
+    const [allPets, setAllPets] = useState([])
     const [favoritePets, setFavoritePets] = useState([])
     const [aggregatedRecords, setAggregatedRecords] = useState({ feeds: [], treatments: [], locations: [] })
 
@@ -147,7 +148,7 @@ export default function ProfilePage() {
                     } else if (sectionTitle === 'Besleme Kayıtlarım') {
                         const items = []
                         const ids = getCurrentUserIdentifiers()
-                        await Promise.all(addedPets.map(async (pet) => {
+                        await Promise.all(allPets.map(async (pet) => {
                             try {
                                 let recs = await getPetRecords(pet.id, 'feeds')
                                 if (Array.isArray(recs) && ids.uid) {
@@ -163,7 +164,7 @@ export default function ProfilePage() {
                     } else if (sectionTitle === 'Tedavi Kayıtlarım') {
                         const items = []
                         const ids = getCurrentUserIdentifiers()
-                        await Promise.all(addedPets.map(async (pet) => {
+                        await Promise.all(allPets.map(async (pet) => {
                             try {
                                 let recs = await getPetRecords(pet.id, 'treatments')
                                 if (Array.isArray(recs) && ids.uid) {
@@ -178,7 +179,7 @@ export default function ProfilePage() {
                     } else if (sectionTitle === 'Konum Kayıtlarım') {
                         const items = []
                         const ids = getCurrentUserIdentifiers()
-                        await Promise.all(addedPets.map(async (pet) => {
+                        await Promise.all(allPets.map(async (pet) => {
                             try {
                                 let recs = await getPetRecords(pet.id, 'locations')
                                 if (Array.isArray(recs) && ids.uid) {
@@ -439,23 +440,27 @@ export default function ProfilePage() {
                 if (!user) {
                     if (active) {
                         setAddedPets([])
+                        setAllPets([])
                         setFavoritePets([])
                     }
                     return
                 }
 
                 try {
-                    const [pets, favorites] = await Promise.all([
+                    const [pets, favorites, petsForRecords] = await Promise.all([
                         getUserPets(user.uid),
                         getUserFavoritePets(user.uid),
+                        getPets(),
                     ])
                     if (active) {
                         setAddedPets(pets)
                         setFavoritePets(favorites)
+                        setAllPets(petsForRecords)
                     }
                 } catch (error) {
                     if (active) {
                         setAddedPets([])
+                        setAllPets([])
                         setFavoritePets([])
                     }
                 }
@@ -472,7 +477,9 @@ export default function ProfilePage() {
     useEffect(() => {
         if (!isRecordsModalVisible || !selectedSectionTitle) return
 
-        setSelectedSectionRecords(getRecordsForSection(selectedSectionTitle, addedPets))
+        if (selectedSectionTitle === 'Eklediğim Hayvanlar') {
+            setSelectedSectionRecords(getRecordsForSection(selectedSectionTitle, addedPets))
+        }
     }, [addedPets, isRecordsModalVisible, selectedSectionTitle])
 
     // aggregate records counts for UI badges
@@ -485,7 +492,7 @@ export default function ProfilePage() {
                     const locationArr = []
 
                     const ids = getCurrentUserIdentifiers()
-                    await Promise.all((addedPets || []).map(async (pet) => {
+                    await Promise.all((allPets || []).map(async (pet) => {
                         try {
                             let f = await getPetRecords(pet.id, 'feeds')
                             let t = await getPetRecords(pet.id, 'treatments')
@@ -519,7 +526,7 @@ export default function ProfilePage() {
             })()
 
         return () => { active = false }
-    }, [addedPets])
+    }, [allPets])
 
     const handlePickProfileImage = async () => {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync()
