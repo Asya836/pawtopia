@@ -42,8 +42,7 @@ expo start
 Projeyi çalıştırmak için Firebase yapılandırması gereklidir. `src/firebase/config.js` içinde kullanılan anahtarları projenize uygun şekilde ayarlayın.
 
 
-
-## Proje Yapısı (kısa özet)
+## Proje Yapısı 
 - `App.js` / `index.js`: uygulama başlangıç noktası
 - `src/navigation`: uygulama gezinme bileşenleri
 - `src/pages`: sayfalar
@@ -52,11 +51,7 @@ Projeyi çalıştırmak için Firebase yapılandırması gereklidir. `src/fireba
 - `assets/`, `src/images`: uygulama görselleri ve ikonlar
 
 ## Ekran Görüntüleri
-<img width="921" height="2048" src="https://github.com/user-attachments/assets/7e6763b3-4af0-416e-9201-4e8aab360af4" />
+<img width="450" height="1000" src="https://github.com/user-attachments/assets/7e6763b3-4af0-416e-9201-4e8aab360af4" /> <img width="450" height="1000" src="https://github.com/user-attachments/assets/8daeb96b-3522-461f-a1b0-505ef25962bd" />
 
-<img width="921" height="2048" src="https://github.com/user-attachments/assets/8daeb96b-3522-461f-a1b0-505ef25962bd" />
-
-<img width="921" height="2048" src="https://github.com/user-attachments/assets/06930999-4b52-42e6-a8bb-2748d7d8b947" />
-
-<img width="921" height="2048" src="https://github.com/user-attachments/assets/a5c3924b-afff-49c5-b480-f60b12a1247e" />
+<img width="450" height="1000" src="https://github.com/user-attachments/assets/06930999-4b52-42e6-a8bb-2748d7d8b947" /> <img width="450" height="1000" src="https://github.com/user-attachments/assets/a5c3924b-afff-49c5-b480-f60b12a1247e" />
 
