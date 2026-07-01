@@ -47,18 +47,6 @@ Projeyi çalıştırmak için Firebase yapılandırması gereklidir. `src/fireba
 
 - Firestore koleksiyonları: `pets` ve her `pets/{id}/locations` alt koleksiyonu beklenir.
 
-Örnek yapı (`src/firebase/config.js`):
-
-```js
-// export const firebaseConfig = {
-//   apiKey: "...",
-//   authDomain: "...",
-//   projectId: "...",
-//   storageBucket: "...",
-//   messagingSenderId: "...",
-//   appId: "..."
-// }
-```
 
 ## Proje Yapısı (kısa özet)
 - `App.js` / `index.js`: uygulama başlangıç noktası
@@ -68,22 +56,9 @@ Projeyi çalıştırmak için Firebase yapılandırması gereklidir. `src/fireba
 - `src/firebase`: Firestore iletişimi ve yardımcı fonksiyonlar
 - `assets/`, `src/images`: uygulama görselleri ve ikonlar
 
-## Harita Davranışı — Önemli Değişiklik
-- Harita geçişleri (kamera animasyonları) uygulama içinde kasıtlı olarak kaldırıldı: `src/pages/MapPage.jsx` dosyasında `animateToCoordinates` fonksiyonunun varsayılan süre `0` yapıldı. Bu sayede harita odaklanmaları anında gerçekleşir ve animasyon kaynaklı gecikmeler/çakışmalar engellenir.
 
-## Geliştirme Notları ve Test
-- Kod formatı: lint/format araçları yoksa proje stilini takip edin
-- Yeni özellik eklerken küçük, tek amaçlı commitler yapın
-
-## Yayınlama
-- Expo ile dağıtım yapıyorsanız `expo build` veya `eas build` komutlarını kullanın. Prod için Firebase kurallarınızı gözden geçirin.
-
-## Katkıda Bulunma
-- Bir özellik/düzeltme eklemek için fork → branch → PR akışını kullanın. Değişikliklerinizin açıklayıcı commit mesajları ve kısa bir PR açıklaması olmasına dikkat edin.
 
 ## Lisans
 - Proje lisansı yoksa veya sahibi tarafından belirtilmemişse, kullanmadan önce repo sahibine danışın.
 
 ---
-
-Değişiklikleri README'ye ekledim. Daha fazla detay (ör. ekran görüntüleri, API dokümantasyonu, test talimatları) istiyorsanız ekleyeyim.
