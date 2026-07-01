@@ -388,7 +388,7 @@ export default function MapPage() {
         // helper to perform a faster / tighter zoom when user explicitly focuses
         const focusTo = (coords) => {
             // prefer a tighter zoom when jumping to a specific pet/location
-            setTimeout(() => animateToCoordinates({ latitude: coords.latitude, longitude: coords.longitude }, 18, 150), 120)
+            setTimeout(() => animateToCoordinates({ latitude: coords.latitude, longitude: coords.longitude }, 18, 0), 120)
         }
 
         if (focusCoords && mapRef.current) {
@@ -490,7 +490,7 @@ export default function MapPage() {
         }
     }
 
-    const animateToCoordinates = (coords, zoom, durationMs = 350) => {
+    const animateToCoordinates = (coords, zoom, durationMs = 0) => {
         if (!mapRef.current || !coords) return
         try {
             // compute a latitudeDelta from a zoom-like parameter for cross-platform behavior
